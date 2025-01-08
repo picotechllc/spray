@@ -44,7 +44,7 @@ The server will start and serve the contents of the specified GCP bucket on the 
 
 ## License
 
-This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License. See the [LICENSE](LICENSE.md) file for details.
 
 ## Contributing
 
