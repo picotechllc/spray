@@ -52,4 +52,4 @@ Contributions are welcome! Please open an issue or submit a pull request.
 
 ## Contact
 
-For any questions or suggestions, please contact [your-email@example.com](mailto:your-email@example.com). 
+For any questions or suggestions, please avail yourself of the GitHub Issues system.
