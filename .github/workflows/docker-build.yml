@@ -68,3 +68,12 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ghcr.io/${{ github.repository }}/spray:${{ needs.tag.outputs.new_version }}
+
+      - name: Set image visibility to public
+        run: |
+          IMAGE_NAME="ghcr.io/${{ github.repository }}/spray:${{ needs.tag.outputs.new_version }}"
+          curl -X PATCH \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github.v3+json" \
+            https://api.github.com/user/packages/container/${{ github.repository }}/visibility \
+            -d '{"visibility":"public"}'
