@@ -6,7 +6,31 @@ on:
       - main
 
 jobs:
+  tag:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Bump version and push tag
+        id: tag_version
+        run: |
+          git config --global user.email "actions@github.com"
+          git config --global user.name "GitHub Actions"
+          git fetch --tags
+          VERSION=$(git tag --sort=-v:refname | head -n 1)
+          if [ -z "$VERSION" ]; then
+            VERSION="v0.0.0"
+          fi
+          NEW_VERSION=$(echo $VERSION | awk -F. -v OFS=. '{$NF += 1 ; print}')
+          echo "NEW_VERSION=$NEW_VERSION" >> $GITHUB_ENV
+          git tag $NEW_VERSION
+          git push origin $NEW_VERSION
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   build:
+    needs: tag
     runs-on: ubuntu-latest
 
     strategy:
@@ -38,35 +62,4 @@ jobs:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: ghcr.io/${{ github.repository }}/spray:latest
-          build-args: |
-            BUCKET_NAME=my-bucket
-
-      - name: Bump version and push tag
-        id: tag_version
-        run: |
-          git config --global user.email "actions@github.com"
-          git config --global user.name "GitHub Actions"
-          git fetch --tags
-          VERSION=$(git tag --sort=-v:refname | head -n 1)
-          if [ -z "$VERSION" ]; then
-            VERSION="v0.0.0"
-          fi
-          NEW_VERSION=$(echo $VERSION | awk -F. -v OFS=. '{$NF += 1 ; print}')
-          git tag $NEW_VERSION
-          git push origin $NEW_VERSION
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Create GitHub Release
-        uses: actions/create-release@v1
-        with:
-          tag_name: ${{ steps.tag_version.outputs.NEW_VERSION }}
-          release_name: Release ${{ steps.tag_version.outputs.NEW_VERSION }}
-          body: |
-            Changes in this release:
-            - Automated release
-          draft: false
-          prerelease: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          tags: ghcr.io/${{ github.repository }}/spray:${{ env.NEW_VERSION }}
