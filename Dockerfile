@@ -17,10 +17,7 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -o spray .
 
 # Start a new stage from scratch
-FROM alpine:latest
-
-# Install ca-certificates
-RUN apk --no-cache add ca-certificates
+FROM gcr.io/distroless/static-debian11
 
 # Set the Current Working Directory inside the container
 WORKDIR /root/
@@ -32,4 +29,4 @@ COPY --from=builder /app/spray .
 EXPOSE 8080
 
 # Command to run the executable
-CMD sh -c 'echo "{\"bucketName\": \"${BUCKET_NAME}\", \"port\": \"8080\"}" > config.json && /root/spray'
+CMD ["sh", "-c", "echo '{\"bucketName\": \"${BUCKET_NAME}\", \"port\": \"8080\"}' > config.json && ./spray"]
