@@ -9,7 +9,9 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"sync"
+	"syscall"
 	"time"
 
 	"cloud.google.com/go/storage"
@@ -118,26 +120,51 @@ func livezHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	cfg, err := loadConfig("config.json")
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("Error loading config: %v", err)
 	}
 
 	log.Printf("Using bucket: %s", cfg.BucketName)
 
 	server, err := newGCSServer(ctx, cfg.BucketName)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("Error creating GCS server: %v", err)
 	}
 
-	http.Handle("/", server)
-	http.Handle("/metrics", expvar.Handler())
-	http.HandleFunc("/readyz", readyzHandler)
-	http.HandleFunc("/livez", livezHandler)
-	log.Printf("Starting server on :%s", cfg.Port)
-	if err := http.ListenAndServe(":"+cfg.Port, nil); err != nil {
-		log.Fatal(err)
+	mux := http.NewServeMux()
+	mux.Handle("/", server)
+	mux.Handle("/metrics", expvar.Handler())
+	mux.HandleFunc("/readyz", readyzHandler)
+	mux.HandleFunc("/livez", livezHandler)
+
+	srv := &http.Server{
+		Addr:    ":" + cfg.Port,
+		Handler: mux,
 	}
+
+	// Graceful shutdown
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("ListenAndServe(): %v", err)
+		}
+	}()
+	log.Printf("Server started on port %s", cfg.Port)
+
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+	log.Println("Shutting down server...")
+
+	ctxShutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := srv.Shutdown(ctxShutdown); err != nil {
+		log.Fatalf("Server forced to shutdown: %v", err)
+	}
+
+	log.Println("Server exiting")
 }
