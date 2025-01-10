@@ -17,7 +17,7 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -o spray .
 
 # Start a new stage from scratch
-FROM gcr.io/distroless/base-debian11
+FROM gcr.io/distroless/base
 
 # Set the Current Working Directory inside the container
 WORKDIR /root/
@@ -29,4 +29,4 @@ COPY --from=builder /app/spray .
 EXPOSE 8080
 
 # Command to run the executable
-CMD ["sh", "-c", "echo '{\"bucketName\": \"${BUCKET_NAME}\", \"port\": \"8080\"}' > config.json && ./spray"]
+CMD ["/busybox/sh", "-c", "echo '{\"bucketName\": \"${BUCKET_NAME}\", \"port\": \"8080\"}' > config.json && ./spray"]
