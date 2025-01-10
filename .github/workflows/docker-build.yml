@@ -72,7 +72,7 @@ jobs:
       - name: Set image visibility to public
         run: |
           IMAGE_NAME="ghcr.io/${{ github.repository_owner }}/spray:${{ needs.tag.outputs.new_version }}"
-          curl -fs -o /dev/null -X PATCH \
+          curl -fs -X PATCH \
             -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
