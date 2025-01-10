@@ -17,7 +17,7 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -o spray .
 
 # Start a new stage from scratch
-FROM gcr.io/distroless/static-debian11
+FROM gcr.io/distroless/base-debian11
 
 # Set the Current Working Directory inside the container
 WORKDIR /root/
