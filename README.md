@@ -23,16 +23,6 @@ Spray is a minimal Go web server that serves the contents of a Google Cloud Plat
     go build
     ```
 
-## Configuration (for development)
-
-Create a configuration file `config.json` with the following structure:
-```json
-{
-    "bucketName": "your-gcp-bucket-name",
-    "port": "8080"
-}
-```
-
 ## Usage
 
 Build the Docker image:

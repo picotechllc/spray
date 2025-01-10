@@ -2,8 +2,8 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"expvar"
+	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -16,11 +16,6 @@ import (
 
 	"cloud.google.com/go/storage"
 )
-
-type config struct {
-	BucketName string `json:"bucketName"`
-	Port       string `json:"port"`
-}
 
 type gcsServer struct {
 	bucket       *storage.BucketHandle
@@ -94,21 +89,6 @@ func (s *gcsServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	count.(*expvar.Int).Add(1)
 }
 
-func loadConfig(filename string) (*config, error) {
-	file, err := os.Open(filename)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open config file: %v", err)
-	}
-	defer file.Close()
-
-	var cfg config
-	if err := json.NewDecoder(file).Decode(&cfg); err != nil {
-		return nil, fmt.Errorf("failed to decode config file: %v", err)
-	}
-
-	return &cfg, nil
-}
-
 func readyzHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("ok"))
@@ -120,17 +100,23 @@ func livezHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
+	var bucketName string
+	var port string
+
+	flag.StringVar(&port, "port", "8080", "Server port")
+	flag.Parse()
+
+	bucketName = os.Getenv("BUCKET_NAME")
+	if bucketName == "" {
+		log.Fatal("Bucket name is required")
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	cfg, err := loadConfig("config.json")
-	if err != nil {
-		log.Fatalf("Error loading config: %v", err)
-	}
+	log.Printf("Using bucket: %s", bucketName)
 
-	log.Printf("Using bucket: %s", cfg.BucketName)
-
-	server, err := newGCSServer(ctx, cfg.BucketName)
+	server, err := newGCSServer(ctx, bucketName)
 	if err != nil {
 		log.Fatalf("Error creating GCS server: %v", err)
 	}
@@ -142,7 +128,7 @@ func main() {
 	mux.HandleFunc("/livez", livezHandler)
 
 	srv := &http.Server{
-		Addr:    ":" + cfg.Port,
+		Addr:    ":" + port,
 		Handler: mux,
 	}
 
@@ -152,7 +138,7 @@ func main() {
 			log.Fatalf("ListenAndServe(): %v", err)
 		}
 	}()
-	log.Printf("Server started on port %s", cfg.Port)
+	log.Printf("Server started on port %s", port)
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
