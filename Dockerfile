@@ -28,14 +28,8 @@ WORKDIR /root/
 # Copy the Pre-built binary file from the previous stage
 COPY --from=builder /app/spray .
 
-# Set the bucket name as a build argument
-ARG BUCKET_NAME
-
-# Create the config.json file dynamically
-RUN echo "{\"bucketName\": \"${BUCKET_NAME}\", \"port\": \"8080\"}" > config.json
-
 # Expose port 8080 to the outside world
 EXPOSE 8080
 
 # Command to run the executable
-CMD ["./spray"]
+CMD sh -c 'echo "{\"bucketName\": \"${BUCKET_NAME}\", \"port\": \"8080\"}" > config.json && /root/spray'
