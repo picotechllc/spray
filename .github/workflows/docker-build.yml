@@ -20,7 +20,7 @@ jobs:
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v2
         with:
-          platforms: ${{ matrix.platform }}
+          platforms: all
     
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v2
@@ -36,7 +36,37 @@ jobs:
         uses: docker/build-push-action@v3
         with:
           context: .
-          file: ./Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: ghcr.io/${{ github.repository }}:latest
+          tags: ghcr.io/${{ github.repository }}/spray:latest
+          build-args: |
+            BUCKET_NAME=my-bucket
+
+      - name: Bump version and push tag
+        id: tag_version
+        run: |
+          git config --global user.email "actions@github.com"
+          git config --global user.name "GitHub Actions"
+          git fetch --tags
+          VERSION=$(git tag --sort=-v:refname | head -n 1)
+          if [ -z "$VERSION" ]; then
+            VERSION="v0.0.0"
+          fi
+          NEW_VERSION=$(echo $VERSION | awk -F. -v OFS=. '{$NF += 1 ; print}')
+          git tag $NEW_VERSION
+          git push origin $NEW_VERSION
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create GitHub Release
+        uses: actions/create-release@v1
+        with:
+          tag_name: ${{ steps.tag_version.outputs.NEW_VERSION }}
+          release_name: Release ${{ steps.tag_version.outputs.NEW_VERSION }}
+          body: |
+            Changes in this release:
+            - Automated release
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
