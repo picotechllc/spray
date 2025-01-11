@@ -34,11 +34,6 @@ jobs:
   build:
     needs: tag
     runs-on: ubuntu-latest
-
-    strategy:
-      matrix:
-        platform: [amd64, arm64]
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -75,7 +70,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          platforms: ${{ matrix.platform }}
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: ghcr.io/${{ github.repository_owner }}/spray:${{ needs.tag.outputs.new_version }}
 
