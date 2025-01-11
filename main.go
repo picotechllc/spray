@@ -52,9 +52,9 @@ func (s *gcsServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	path := r.URL.Path
 
-	// Serve index.html for root path
-	if path == "/" {
-		path = "index.html"
+	// Serve index.html for directory paths
+	if path == "/" || path[len(path)-1] == '/' {
+		path += "index.html"
 	} else {
 		// Remove leading slash
 		path = path[1:]
