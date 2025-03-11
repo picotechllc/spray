@@ -134,7 +134,11 @@ func (s *gcsServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.logger.Log(logging.Entry{
 			Severity: logging.Error,
-			Payload:  fmt.Sprintf("Error cleaning path %s: %v", r.URL.Path, err),
+			Payload: map[string]any{
+				"error":     err.Error(),
+				"path":      r.URL.Path,
+				"operation": "clean_path",
+			},
 		})
 		http.Error(w, "Invalid path", http.StatusBadRequest)
 		return
@@ -145,14 +149,24 @@ func (s *gcsServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if err == storage.ErrObjectNotExist {
 			s.logger.Log(logging.Entry{
 				Severity: logging.Warning,
-				Payload:  fmt.Sprintf("Object %s not found: %v", cleanPath, err),
+				Payload: map[string]any{
+					"error":     err.Error(),
+					"path":      cleanPath,
+					"operation": "get_object",
+					"status":    http.StatusNotFound,
+				},
 			})
 			http.NotFound(w, r)
 			return
 		}
 		s.logger.Log(logging.Entry{
 			Severity: logging.Error,
-			Payload:  fmt.Sprintf("Error opening object %s: %v", cleanPath, err),
+			Payload: map[string]any{
+				"error":     err.Error(),
+				"path":      cleanPath,
+				"operation": "get_object",
+				"status":    http.StatusInternalServerError,
+			},
 		})
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -165,7 +179,11 @@ func (s *gcsServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if _, err := io.Copy(w, reader); err != nil {
 		s.logger.Log(logging.Entry{
 			Severity: logging.Error,
-			Payload:  fmt.Sprintf("Error copying object contents: %v", err),
+			Payload: map[string]any{
+				"error":     err.Error(),
+				"path":      cleanPath,
+				"operation": "copy_contents",
+			},
 		})
 	}
 
