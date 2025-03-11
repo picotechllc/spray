@@ -14,10 +14,6 @@ import (
 )
 
 // Mock implementations
-type mockBucket struct {
-	objects map[string]mockObject
-}
-
 type mockObject struct {
 	data        []byte
 	contentType string
@@ -39,14 +35,6 @@ func (r *mockReader) Read(p []byte) (int, error) {
 
 func (r *mockReader) Close() error {
 	return nil
-}
-
-func (b *mockBucket) Object(name string) *storage.ObjectHandle {
-	// Normalize the path for lookup
-	if name == "" {
-		name = "index.html"
-	}
-	return &storage.ObjectHandle{}
 }
 
 type mockObjectStore struct {
