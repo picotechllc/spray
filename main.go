@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"expvar"
 	"flag"
 	"fmt"
 	"log"
@@ -13,6 +12,7 @@ import (
 	"time"
 
 	"cloud.google.com/go/logging"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 type config struct {
@@ -73,7 +73,7 @@ var setupServer ServerSetup = func(ctx context.Context, cfg *config) (*http.Serv
 
 	mux := http.NewServeMux()
 	mux.Handle("/", server)
-	mux.Handle("/metrics", expvar.Handler())
+	mux.Handle("/metrics", promhttp.Handler())
 	mux.HandleFunc("/readyz", readyzHandler)
 	mux.HandleFunc("/livez", livezHandler)
 
