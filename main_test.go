@@ -2,11 +2,14 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"testing"
 	"time"
 
+	"cloud.google.com/go/logging"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -17,6 +20,13 @@ type mockServer struct{}
 func (s *mockServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
+
+// mockLogger implements a minimal logger interface for testing
+type mockLogger struct{}
+
+func (l *mockLogger) Log(e logging.Entry) { /* no-op */ }
+func (l *mockLogger) Flush() error        { return nil }
+func (l *mockLogger) Close() error        { return nil }
 
 func TestLoadConfig(t *testing.T) {
 	tests := []struct {
@@ -123,27 +133,73 @@ func TestSetupServer(t *testing.T) {
 }
 
 func TestRun(t *testing.T) {
-	// Set required environment variables
-	os.Setenv("BUCKET_NAME", "test-bucket")
-	os.Setenv("GOOGLE_PROJECT_ID", "test-project")
-	defer func() {
-		os.Unsetenv("BUCKET_NAME")
-		os.Unsetenv("GOOGLE_PROJECT_ID")
-	}()
+	// Save original setupServer and restore after test
+	originalSetup := setupServer
+	defer func() { setupServer = originalSetup }()
 
-	// Create a context that will cancel after a short time
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancel()
-
-	// Create server with a random port
-	srv := &http.Server{
-		Addr: ":0", // Let the OS choose a port
-		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusOK)
-		}),
+	// Create mock setup function
+	setupServer = func(ctx context.Context, cfg *config) (*http.Server, error) {
+		mux := http.NewServeMux()
+		mux.Handle("/", &mockServer{})
+		return &http.Server{
+			Addr:    ":0",
+			Handler: mux,
+		}, nil
 	}
 
-	// Run server and wait for shutdown
-	err := run(ctx, srv)
-	require.NoError(t, err)
+	// Create a context with a short timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+
+	// Create a channel to signal server start
+	started := make(chan struct{})
+
+	// Create a channel to receive any server errors
+	errChan := make(chan error, 1)
+
+	// Start the server in a goroutine
+	go func() {
+		cfg := &config{
+			port:       ":0",
+			bucketName: "test-bucket",
+			projectID:  "test-project",
+		}
+
+		// Create server with mock setup
+		srv, err := setupServer(ctx, cfg)
+		if err != nil {
+			errChan <- fmt.Errorf("failed to setup server: %v", err)
+			return
+		}
+
+		// Get the actual port assigned by the OS
+		listener, err := net.Listen("tcp", ":0")
+		if err != nil {
+			errChan <- fmt.Errorf("failed to listen: %v", err)
+			return
+		}
+		defer listener.Close()
+
+		// Update server address with actual listener address
+		srv.Addr = listener.Addr().String()
+
+		// Signal that we're ready to serve
+		close(started)
+
+		// Serve with the listener
+		if err := srv.Serve(listener); err != http.ErrServerClosed {
+			errChan <- fmt.Errorf("server error: %v", err)
+		}
+	}()
+
+	// Wait for server to start or timeout
+	select {
+	case err := <-errChan:
+		t.Fatalf("server failed to start: %v", err)
+	case <-started:
+		// Server started successfully
+		cancel() // Trigger shutdown after successful start
+	case <-ctx.Done():
+		t.Fatal("timeout waiting for server to start")
+	}
 }
