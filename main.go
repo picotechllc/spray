@@ -4,6 +4,7 @@ import (
 	"context"
 	"expvar"
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -14,39 +15,42 @@ import (
 	"cloud.google.com/go/logging"
 )
 
-func main() {
-	var bucketName string
-	var port string
+type config struct {
+	port       string
+	bucketName string
+	projectID  string
+}
 
-	flag.StringVar(&port, "port", "8080", "Server port")
+func loadConfig() (*config, error) {
+	var cfg config
+	flag.StringVar(&cfg.port, "port", "8080", "Server port")
 	flag.Parse()
 
-	bucketName = os.Getenv("BUCKET_NAME")
-	if bucketName == "" {
-		log.Fatal("Bucket name is required to serve objects")
+	cfg.bucketName = os.Getenv("BUCKET_NAME")
+	if cfg.bucketName == "" {
+		return nil, fmt.Errorf("BUCKET_NAME environment variable is required")
 	}
 
-	projectID := os.Getenv("GOOGLE_PROJECT_ID")
-	if projectID == "" {
-		log.Fatal("GOOGLE_PROJECT_ID is required to create logging client")
+	cfg.projectID = os.Getenv("GOOGLE_PROJECT_ID")
+	if cfg.projectID == "" {
+		return nil, fmt.Errorf("GOOGLE_PROJECT_ID environment variable is required")
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	return &cfg, nil
+}
 
-	log.Printf("Using bucket: %s", bucketName)
-
-	client, err := logging.NewClient(ctx, projectID)
+func setupServer(ctx context.Context, cfg *config) (*http.Server, error) {
+	client, err := logging.NewClient(ctx, cfg.projectID)
 	if err != nil {
-		log.Fatalf("Failed to create logging client: %v", err)
+		return nil, fmt.Errorf("failed to create logging client: %v", err)
 	}
-	defer client.Close()
 
 	logger := client.Logger("gcs-server")
 
-	server, err := newGCSServer(ctx, bucketName, logger)
+	server, err := newGCSServer(ctx, cfg.bucketName, logger)
 	if err != nil {
-		log.Fatalf("Error creating GCS server: %v", err)
+		client.Close()
+		return nil, fmt.Errorf("failed to create GCS server: %v", err)
 	}
 
 	mux := http.NewServeMux()
@@ -55,30 +59,60 @@ func main() {
 	mux.HandleFunc("/readyz", readyzHandler)
 	mux.HandleFunc("/livez", livezHandler)
 
-	srv := &http.Server{
-		Addr:    ":" + port,
+	return &http.Server{
+		Addr:    ":" + cfg.port,
 		Handler: mux,
-	}
+	}, nil
+}
 
-	// Graceful shutdown
+func run(ctx context.Context, srv *http.Server) error {
+	// Channel to listen for errors coming from the listener.
+	serverErrors := make(chan error, 1)
+
+	// Start the server
 	go func() {
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("ListenAndServe(): %v", err)
-		}
+		log.Printf("Server started on port %s", srv.Addr)
+		serverErrors <- srv.ListenAndServe()
 	}()
-	log.Printf("Server started on port %s", port)
 
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
-	log.Println("Shutting down server...")
+	// Channel to listen for an interrupt or terminate signal from the OS.
+	shutdown := make(chan os.Signal, 1)
+	signal.Notify(shutdown, os.Interrupt, syscall.SIGTERM)
 
-	ctxShutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	// Blocking select waiting for either a server error or a signal.
+	select {
+	case err := <-serverErrors:
+		return fmt.Errorf("server error: %v", err)
+	case <-shutdown:
+		log.Println("Starting shutdown...")
 
-	if err := srv.Shutdown(ctxShutdown); err != nil {
-		log.Fatalf("Server forced to shutdown: %v", err)
+		// Give outstanding requests a deadline for completion.
+		ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+
+		// Asking listener to shut down and shed load.
+		if err := srv.Shutdown(ctx); err != nil {
+			// Error from closing listeners, or context timeout.
+			return fmt.Errorf("graceful shutdown failed: %v", err)
+		}
 	}
 
-	log.Println("Server exiting")
+	return nil
+}
+
+func main() {
+	cfg, err := loadConfig()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	ctx := context.Background()
+	srv, err := setupServer(ctx, cfg)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	if err := run(ctx, srv); err != nil {
+		log.Fatal(err)
+	}
 }
