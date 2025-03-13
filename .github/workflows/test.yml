@@ -20,15 +20,23 @@ jobs:
           cache: true
 
       - name: Run Tests with Coverage
+        id: test
+        continue-on-error: true
         run: go test -v -race -coverprofile=coverage.txt -covermode=atomic ./...
 
       - name: Convert coverage to lcov
+        if: always()
         uses: jandelgado/gcov2lcov-action@v1.0.9
         with:
           infile: coverage.txt
           outfile: coverage.lcov
 
       - name: Send coverage to Coveralls
+        if: always()
         uses: coverallsapp/github-action@v2
         with:
-          file: coverage.lcov 
+          file: coverage.lcov
+
+      - name: Check test status
+        if: steps.test.outcome == 'failure'
+        run: exit 1 
