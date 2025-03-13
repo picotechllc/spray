@@ -12,7 +12,7 @@ var (
 			Name: "gcs_server_requests_total",
 			Help: "Total number of requests handled by the GCS server",
 		},
-		[]string{"path", "method", "status"},
+		[]string{"bucket_name", "path", "method", "status"},
 	)
 
 	// requestDuration tracks request duration in seconds
@@ -22,7 +22,7 @@ var (
 			Help:    "Duration of requests in seconds",
 			Buckets: prometheus.DefBuckets,
 		},
-		[]string{"path", "method"},
+		[]string{"bucket_name", "path", "method"},
 	)
 
 	// bytesTransferred tracks the number of bytes transferred
@@ -31,15 +31,16 @@ var (
 			Name: "gcs_server_bytes_transferred_total",
 			Help: "Total number of bytes transferred",
 		},
-		[]string{"path", "method", "direction"}, // direction can be "upload" or "download"
+		[]string{"bucket_name", "path", "method", "direction"}, // direction can be "upload" or "download"
 	)
 
 	// activeRequests tracks the number of currently active requests
-	activeRequests = promauto.NewGauge(
+	activeRequests = promauto.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "gcs_server_active_requests",
 			Help: "Number of currently active requests",
 		},
+		[]string{"bucket_name"},
 	)
 
 	// cacheStatus tracks cache hits and misses (for future use)
@@ -48,7 +49,7 @@ var (
 			Name: "gcs_server_cache_total",
 			Help: "Total number of cache hits/misses",
 		},
-		[]string{"path", "status"}, // status: hit/miss
+		[]string{"bucket_name", "path", "status"}, // status: hit/miss
 	)
 
 	// errorTotal tracks specific error types
@@ -57,7 +58,7 @@ var (
 			Name: "gcs_server_errors_total",
 			Help: "Total number of errors by type",
 		},
-		[]string{"path", "error_type"}, // error_type: storage_error, invalid_path, etc.
+		[]string{"bucket_name", "path", "error_type"}, // error_type: storage_error, invalid_path, etc.
 	)
 
 	// objectSize tracks the size distribution of served objects
@@ -67,7 +68,7 @@ var (
 			Help:    "Distribution of served object sizes in bytes",
 			Buckets: prometheus.ExponentialBuckets(1024, 2, 10), // 1KB to 1GB
 		},
-		[]string{"path"},
+		[]string{"bucket_name", "path"},
 	)
 
 	// gcsLatency tracks GCS operation latency
@@ -77,6 +78,6 @@ var (
 			Help:    "Duration of GCS operations in seconds",
 			Buckets: prometheus.DefBuckets,
 		},
-		[]string{"operation"}, // operation: get_object, get_attrs
+		[]string{"bucket_name", "operation"}, // operation: get_object, get_attrs
 	)
 )

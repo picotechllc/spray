@@ -58,6 +58,8 @@ func TestMetricsRegistration(t *testing.T) {
 }
 
 func TestMetricsBehavior(t *testing.T) {
+	const testBucket = "test-bucket"
+
 	t.Run("requestsTotal", func(t *testing.T) {
 		// Reset all metrics before test
 		prometheus.DefaultRegisterer.Unregister(requestsTotal)
@@ -66,32 +68,33 @@ func TestMetricsBehavior(t *testing.T) {
 				Name: "gcs_server_requests_total",
 				Help: "Total number of requests handled by the GCS server",
 			},
-			[]string{"path", "method", "status"},
+			[]string{"bucket_name", "path", "method", "status"},
 		)
 
 		// Test incrementing counter
-		requestsTotal.WithLabelValues("/test", "GET", "200").Inc()
+		requestsTotal.WithLabelValues(testBucket, "/test", "GET", "200").Inc()
 
-		value := testutil.ToFloat64(requestsTotal.WithLabelValues("/test", "GET", "200"))
+		value := testutil.ToFloat64(requestsTotal.WithLabelValues(testBucket, "/test", "GET", "200"))
 		assert.Equal(t, float64(1), value)
 	})
 
 	t.Run("activeRequests", func(t *testing.T) {
 		// Reset metric before test
 		prometheus.DefaultRegisterer.Unregister(activeRequests)
-		activeRequests = promauto.NewGauge(
+		activeRequests = promauto.NewGaugeVec(
 			prometheus.GaugeOpts{
 				Name: "gcs_server_active_requests",
 				Help: "Number of currently active requests",
 			},
+			[]string{"bucket_name"},
 		)
 
 		// Test gauge behavior
-		activeRequests.Inc()
-		assert.Equal(t, float64(1), testutil.ToFloat64(activeRequests))
+		activeRequests.WithLabelValues(testBucket).Inc()
+		assert.Equal(t, float64(1), testutil.ToFloat64(activeRequests.WithLabelValues(testBucket)))
 
-		activeRequests.Dec()
-		assert.Equal(t, float64(0), testutil.ToFloat64(activeRequests))
+		activeRequests.WithLabelValues(testBucket).Dec()
+		assert.Equal(t, float64(0), testutil.ToFloat64(activeRequests.WithLabelValues(testBucket)))
 	})
 
 	t.Run("bytesTransferred", func(t *testing.T) {
@@ -102,13 +105,13 @@ func TestMetricsBehavior(t *testing.T) {
 				Name: "gcs_server_bytes_transferred_total",
 				Help: "Total number of bytes transferred",
 			},
-			[]string{"path", "method", "direction"},
+			[]string{"bucket_name", "path", "method", "direction"},
 		)
 
 		// Test adding bytes
-		bytesTransferred.WithLabelValues("/test", "GET", "download").Add(100)
+		bytesTransferred.WithLabelValues(testBucket, "/test", "GET", "download").Add(100)
 
-		value := testutil.ToFloat64(bytesTransferred.WithLabelValues("/test", "GET", "download"))
+		value := testutil.ToFloat64(bytesTransferred.WithLabelValues(testBucket, "/test", "GET", "download"))
 		assert.Equal(t, float64(100), value)
 	})
 
@@ -121,11 +124,11 @@ func TestMetricsBehavior(t *testing.T) {
 				Help:    "Duration of requests in seconds",
 				Buckets: prometheus.DefBuckets,
 			},
-			[]string{"path", "method"},
+			[]string{"bucket_name", "path", "method"},
 		)
 
 		// Test observing durations
-		requestDuration.WithLabelValues("/test", "GET").Observe(0.1)
+		requestDuration.WithLabelValues(testBucket, "/test", "GET").Observe(0.1)
 
 		// Verify the histogram has samples
 		count := testutil.CollectAndCount(requestDuration)
@@ -140,15 +143,15 @@ func TestMetricsBehavior(t *testing.T) {
 				Name: "gcs_server_errors_total",
 				Help: "Total number of errors by type",
 			},
-			[]string{"path", "error_type"},
+			[]string{"bucket_name", "path", "error_type"},
 		)
 
 		// Test error counting
-		errorTotal.WithLabelValues("/test", "storage_error").Inc()
-		errorTotal.WithLabelValues("/test", "invalid_path").Inc()
-		errorTotal.WithLabelValues("/test", "object_not_found").Inc()
+		errorTotal.WithLabelValues(testBucket, "/test", "storage_error").Inc()
+		errorTotal.WithLabelValues(testBucket, "/test", "invalid_path").Inc()
+		errorTotal.WithLabelValues(testBucket, "/test", "object_not_found").Inc()
 
-		value := testutil.ToFloat64(errorTotal.WithLabelValues("/test", "storage_error"))
+		value := testutil.ToFloat64(errorTotal.WithLabelValues(testBucket, "/test", "storage_error"))
 		assert.Equal(t, float64(1), value)
 	})
 
@@ -161,11 +164,11 @@ func TestMetricsBehavior(t *testing.T) {
 				Help:    "Distribution of served object sizes in bytes",
 				Buckets: prometheus.ExponentialBuckets(1024, 2, 10),
 			},
-			[]string{"path"},
+			[]string{"bucket_name", "path"},
 		)
 
 		// Test size observation
-		objectSize.WithLabelValues("/test").Observe(2048)
+		objectSize.WithLabelValues(testBucket, "/test").Observe(2048)
 
 		// Verify the histogram has samples
 		count := testutil.CollectAndCount(objectSize)
@@ -181,11 +184,11 @@ func TestMetricsBehavior(t *testing.T) {
 				Help:    "Duration of GCS operations in seconds",
 				Buckets: prometheus.DefBuckets,
 			},
-			[]string{"operation"},
+			[]string{"bucket_name", "operation"},
 		)
 
 		// Test latency observation
-		gcsLatency.WithLabelValues("get_object").Observe(0.05)
+		gcsLatency.WithLabelValues(testBucket, "get_object").Observe(0.05)
 
 		// Verify the histogram has samples
 		count := testutil.CollectAndCount(gcsLatency)
