@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"cloud.google.com/go/logging"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -20,29 +19,6 @@ type mockServer struct{}
 
 func (s *mockServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
-}
-
-// mockLogger implements logging.Logger interface for testing
-type mockLogger struct{}
-
-func (l *mockLogger) Log(e logging.Entry) {}
-func (l *mockLogger) Flush() error        { return nil }
-func (l *mockLogger) Close() error        { return nil }
-
-// mockLoggingClient implements a minimal logging client for testing
-type mockLoggingClient struct {
-	shouldFail bool
-}
-
-func (c *mockLoggingClient) Logger(logID string) *logging.Logger {
-	return &logging.Logger{}
-}
-
-func (c *mockLoggingClient) Close() error {
-	if c.shouldFail {
-		return fmt.Errorf("mock close error")
-	}
-	return nil
 }
 
 func TestLoadConfig(t *testing.T) {
