@@ -1,3 +1,5 @@
+[![Coverage Status](https://coveralls.io/repos/github/picotechllc/spray/badge.svg?branch=feature/improve-path-handling)](https://coveralls.io/github/picotechllc/spray?branch=feature/improve-path-handling)
+
 # Spray
 
 Spray is a minimal Go web server that serves the contents of a Google Cloud Platform (GCP) bucket.
