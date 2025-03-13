@@ -20,12 +20,23 @@ func TestLoadConfig(t *testing.T) {
 		name        string
 		bucket      string
 		project     string
+		basePort    string
+		expectPort  string
 		expectError bool
 	}{
 		{
 			name:        "Valid configuration",
 			bucket:      "test-bucket",
 			project:     "test-project",
+			expectPort:  "8080", // default port
+			expectError: false,
+		},
+		{
+			name:        "Valid configuration with custom port",
+			bucket:      "test-bucket",
+			project:     "test-project",
+			basePort:    "9090",
+			expectPort:  "9090",
 			expectError: false,
 		},
 		{
@@ -47,7 +58,12 @@ func TestLoadConfig(t *testing.T) {
 			os.Setenv("BUCKET_NAME", tt.bucket)
 			os.Setenv("GOOGLE_PROJECT_ID", tt.project)
 
-			cfg, err := loadConfig()
+			var base *config
+			if tt.basePort != "" {
+				base = &config{port: tt.basePort}
+			}
+
+			cfg, err := loadConfig(base)
 			if tt.expectError {
 				if err == nil {
 					t.Error("Expected error but got none")
@@ -65,6 +81,9 @@ func TestLoadConfig(t *testing.T) {
 			}
 			if cfg.projectID != tt.project {
 				t.Errorf("Expected project %q, got %q", tt.project, cfg.projectID)
+			}
+			if cfg.port != tt.expectPort {
+				t.Errorf("Expected port %q, got %q", tt.expectPort, cfg.port)
 			}
 		})
 	}

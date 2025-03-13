@@ -21,10 +21,24 @@ type config struct {
 	projectID  string
 }
 
-func loadConfig() (*config, error) {
+// parseFlags parses command line flags and returns a config with just the flags set.
+// This should only be called once from main().
+func parseFlags() *config {
 	var cfg config
 	flag.StringVar(&cfg.port, "port", "8080", "Server port")
 	flag.Parse()
+	return &cfg
+}
+
+// loadConfig loads configuration from environment variables.
+// It takes an optional base config to extend (e.g., from command line flags).
+func loadConfig(base *config) (*config, error) {
+	cfg := &config{
+		port: "8080", // default value
+	}
+	if base != nil {
+		*cfg = *base
+	}
 
 	cfg.bucketName = os.Getenv("BUCKET_NAME")
 	if cfg.bucketName == "" {
@@ -36,7 +50,7 @@ func loadConfig() (*config, error) {
 		return nil, fmt.Errorf("GOOGLE_PROJECT_ID environment variable is required")
 	}
 
-	return &cfg, nil
+	return cfg, nil
 }
 
 func setupServer(ctx context.Context, cfg *config) (*http.Server, error) {
@@ -101,7 +115,8 @@ func run(ctx context.Context, srv *http.Server) error {
 }
 
 func main() {
-	cfg, err := loadConfig()
+	flagCfg := parseFlags()
+	cfg, err := loadConfig(flagCfg)
 	if err != nil {
 		log.Fatal(err)
 	}
