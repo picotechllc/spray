@@ -1,4 +1,4 @@
-[![Coverage Status](https://coveralls.io/repos/github/picotechllc/spray/badge.svg?branch=feature/improve-path-handling)](https://coveralls.io/github/picotechllc/spray?branch=feature/improve-path-handling)
+[![Coverage Status](https://coveralls.io/repos/github/picotechllc/spray/badge.svg?branch=main)](https://coveralls.io/github/picotechllc/spray?branch=main)
 
 # Spray
 
