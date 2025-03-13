@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"cloud.google.com/go/logging"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -20,13 +19,6 @@ type mockServer struct{}
 func (s *mockServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
-
-// mockLogger implements a minimal logger interface for testing
-type mockLogger struct{}
-
-func (l *mockLogger) Log(e logging.Entry) { /* no-op */ }
-func (l *mockLogger) Flush() error        { return nil }
-func (l *mockLogger) Close() error        { return nil }
 
 func TestLoadConfig(t *testing.T) {
 	tests := []struct {
