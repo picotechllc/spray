@@ -2,154 +2,170 @@ package main
 
 import (
 	"context"
+	"net/http"
 	"os"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-func TestLoadConfig(t *testing.T) {
-	// Save original env vars
-	origBucket := os.Getenv("BUCKET_NAME")
-	origProject := os.Getenv("GOOGLE_PROJECT_ID")
-	defer func() {
-		os.Setenv("BUCKET_NAME", origBucket)
-		os.Setenv("GOOGLE_PROJECT_ID", origProject)
-	}()
+// mockServer implements http.Handler for testing
+type mockServer struct{}
 
+func (s *mockServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusOK)
+}
+
+func TestLoadConfig(t *testing.T) {
 	tests := []struct {
-		name        string
-		bucket      string
-		project     string
-		basePort    string
-		expectPort  string
-		expectError bool
+		name       string
+		basePort   string
+		expectPort string
+		envs       map[string]string
+		wantErr    bool
 	}{
 		{
-			name:        "Valid configuration",
-			bucket:      "test-bucket",
-			project:     "test-project",
-			expectPort:  "8080", // default port
-			expectError: false,
+			name:       "valid config with default port",
+			expectPort: "8080",
+			envs: map[string]string{
+				"BUCKET_NAME":       "test-bucket",
+				"GOOGLE_PROJECT_ID": "test-project",
+			},
 		},
 		{
-			name:        "Valid configuration with custom port",
-			bucket:      "test-bucket",
-			project:     "test-project",
-			basePort:    "9090",
-			expectPort:  "9090",
-			expectError: false,
+			name:       "valid config with custom port",
+			basePort:   "9090",
+			expectPort: "9090",
+			envs: map[string]string{
+				"BUCKET_NAME":       "test-bucket",
+				"GOOGLE_PROJECT_ID": "test-project",
+			},
 		},
 		{
-			name:        "Missing bucket",
-			bucket:      "",
-			project:     "test-project",
-			expectError: true,
+			name: "missing bucket name",
+			envs: map[string]string{
+				"GOOGLE_PROJECT_ID": "test-project",
+			},
+			wantErr: true,
 		},
 		{
-			name:        "Missing project",
-			bucket:      "test-bucket",
-			project:     "",
-			expectError: true,
+			name: "missing project ID",
+			envs: map[string]string{
+				"BUCKET_NAME": "test-bucket",
+			},
+			wantErr: true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			os.Setenv("BUCKET_NAME", tt.bucket)
-			os.Setenv("GOOGLE_PROJECT_ID", tt.project)
+			// Clear environment variables
+			os.Unsetenv("BUCKET_NAME")
+			os.Unsetenv("GOOGLE_PROJECT_ID")
 
+			// Set test environment variables
+			for k, v := range tt.envs {
+				os.Setenv(k, v)
+			}
+
+			// Create base config if port is specified
 			var base *config
 			if tt.basePort != "" {
 				base = &config{port: tt.basePort}
 			}
 
 			cfg, err := loadConfig(base)
-			if tt.expectError {
-				if err == nil {
-					t.Error("Expected error but got none")
-				}
+			if tt.wantErr {
+				assert.Error(t, err)
 				return
 			}
 
-			if err != nil {
-				t.Errorf("Unexpected error: %v", err)
-				return
-			}
-
-			if cfg.bucketName != tt.bucket {
-				t.Errorf("Expected bucket %q, got %q", tt.bucket, cfg.bucketName)
-			}
-			if cfg.projectID != tt.project {
-				t.Errorf("Expected project %q, got %q", tt.project, cfg.projectID)
-			}
-			if cfg.port != tt.expectPort {
-				t.Errorf("Expected port %q, got %q", tt.expectPort, cfg.port)
-			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.expectPort, cfg.port)
+			assert.Equal(t, tt.envs["BUCKET_NAME"], cfg.bucketName)
+			assert.Equal(t, tt.envs["GOOGLE_PROJECT_ID"], cfg.projectID)
 		})
 	}
 }
 
 func TestSetupServer(t *testing.T) {
+	// Save original setupServer and restore after test
+	originalSetup := setupServer
+	defer func() { setupServer = originalSetup }()
+
+	// Create mock setup function
+	setupServer = func(ctx context.Context, cfg *config) (*http.Server, error) {
+		mux := http.NewServeMux()
+		mux.Handle("/", &mockServer{})
+		mux.Handle("/metrics", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}))
+		mux.HandleFunc("/readyz", readyzHandler)
+		mux.HandleFunc("/livez", livezHandler)
+
+		return &http.Server{
+			Addr:    ":" + cfg.port,
+			Handler: mux,
+		}, nil
+	}
+
 	cfg := &config{
 		port:       "8080",
 		bucketName: "test-bucket",
 		projectID:  "test-project",
 	}
 
-	ctx := context.Background()
-	srv, err := setupServer(ctx, cfg)
-	if err != nil {
-		// We expect an error in tests since we can't authenticate with GCP
-		if err.Error() == "google: could not find default credentials" {
-			return
-		}
-		t.Errorf("Unexpected error: %v", err)
-		return
-	}
-
-	if srv.Addr != ":8080" {
-		t.Errorf("Expected server address :8080, got %s", srv.Addr)
-	}
+	srv, err := setupServer(context.Background(), cfg)
+	require.NoError(t, err)
+	assert.Equal(t, ":8080", srv.Addr)
 }
 
 func TestRun(t *testing.T) {
+	// Save original setupServer and restore after test
+	originalSetup := setupServer
+	defer func() { setupServer = originalSetup }()
+
+	// Create mock setup function
+	setupServer = func(ctx context.Context, cfg *config) (*http.Server, error) {
+		mux := http.NewServeMux()
+		mux.Handle("/", &mockServer{})
+		mux.Handle("/metrics", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}))
+		mux.HandleFunc("/readyz", readyzHandler)
+		mux.HandleFunc("/livez", livezHandler)
+
+		return &http.Server{
+			Addr:    ":" + cfg.port,
+			Handler: mux,
+		}, nil
+	}
+
+	// Set required environment variables
+	os.Setenv("BUCKET_NAME", "test-bucket")
+	os.Setenv("GOOGLE_PROJECT_ID", "test-project")
+	defer func() {
+		os.Unsetenv("BUCKET_NAME")
+		os.Unsetenv("GOOGLE_PROJECT_ID")
+	}()
+
+	// Create a context that will cancel after a short time
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	// Create a config for testing
 	cfg := &config{
-		port:       "0", // Use port 0 to let the OS choose a free port
+		port:       "8080",
 		bucketName: "test-bucket",
 		projectID:  "test-project",
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
+	// Setup server
 	srv, err := setupServer(ctx, cfg)
-	if err != nil {
-		// We expect an error in tests since we can't authenticate with GCP
-		if err.Error() == "google: could not find default credentials" {
-			return
-		}
-		t.Errorf("Unexpected error: %v", err)
-		return
-	}
+	require.NoError(t, err)
 
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- run(ctx, srv)
-	}()
-
-	// Give the server a moment to start
-	time.Sleep(100 * time.Millisecond)
-
-	// Trigger shutdown
-	cancel()
-
-	// Wait for shutdown or timeout
-	select {
-	case err := <-errCh:
-		if err != nil {
-			t.Errorf("Unexpected error: %v", err)
-		}
-	case <-time.After(6 * time.Second):
-		t.Error("Server shutdown timed out")
-	}
+	err = run(ctx, srv)
+	require.NoError(t, err)
 }

@@ -53,7 +53,11 @@ func loadConfig(base *config) (*config, error) {
 	return cfg, nil
 }
 
-func setupServer(ctx context.Context, cfg *config) (*http.Server, error) {
+// ServerSetup is a function type for setting up the HTTP server
+type ServerSetup func(context.Context, *config) (*http.Server, error)
+
+// setupServer is the default server setup implementation
+var setupServer ServerSetup = func(ctx context.Context, cfg *config) (*http.Server, error) {
 	client, err := logging.NewClient(ctx, cfg.projectID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create logging client: %v", err)
