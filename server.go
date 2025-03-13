@@ -134,12 +134,17 @@ func (s *gcsServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				"operation": "clean_path",
 			},
 		})
+		errorTotal.WithLabelValues(r.URL.Path, "invalid_path").Inc()
 		requestsTotal.WithLabelValues(r.URL.Path, r.Method, "400").Inc()
 		http.Error(w, "Invalid path", http.StatusBadRequest)
 		return
 	}
 
+	// Track GCS operations timing
+	gcsStart := time.Now()
 	reader, attrs, err := s.store.GetObject(ctx, cleanPath)
+	gcsLatency.WithLabelValues("get_object").Observe(time.Since(gcsStart).Seconds())
+
 	if err != nil {
 		if err == storage.ErrObjectNotExist {
 			s.logger.Log(logging.Entry{
@@ -151,6 +156,7 @@ func (s *gcsServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					"status":    http.StatusNotFound,
 				},
 			})
+			errorTotal.WithLabelValues(cleanPath, "object_not_found").Inc()
 			requestsTotal.WithLabelValues(cleanPath, r.Method, "404").Inc()
 			http.NotFound(w, r)
 			return
@@ -164,11 +170,15 @@ func (s *gcsServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				"status":    http.StatusInternalServerError,
 			},
 		})
+		errorTotal.WithLabelValues(cleanPath, "storage_error").Inc()
 		requestsTotal.WithLabelValues(cleanPath, r.Method, "500").Inc()
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	defer reader.Close()
+
+	// Track object size
+	objectSize.WithLabelValues(cleanPath).Observe(float64(attrs.Size))
 
 	w.Header().Set("Content-Type", attrs.ContentType)
 
@@ -183,6 +193,7 @@ func (s *gcsServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				"operation": "copy_contents",
 			},
 		})
+		errorTotal.WithLabelValues(cleanPath, "copy_error").Inc()
 		requestsTotal.WithLabelValues(cleanPath, r.Method, "500").Inc()
 	} else {
 		requestsTotal.WithLabelValues(cleanPath, r.Method, "200").Inc()
