@@ -7,8 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"net/http/httptest"
-
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -125,12 +123,6 @@ func TestSetupServer(t *testing.T) {
 }
 
 func TestRun(t *testing.T) {
-	// Create test server
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer ts.Close()
-
 	// Set required environment variables
 	os.Setenv("BUCKET_NAME", "test-bucket")
 	os.Setenv("GOOGLE_PROJECT_ID", "test-project")
@@ -143,9 +135,9 @@ func TestRun(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
-	// Create server with the test server's port
+	// Create server with a random port
 	srv := &http.Server{
-		Addr: ts.Listener.Addr().String(),
+		Addr: ":0", // Let the OS choose a port
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
 		}),
