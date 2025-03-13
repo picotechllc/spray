@@ -121,8 +121,8 @@ func (s *gcsServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	// Track active requests
-	activeRequests.Inc()
-	defer activeRequests.Dec()
+	activeRequests.WithLabelValues(s.bucketName).Inc()
+	defer activeRequests.WithLabelValues(s.bucketName).Dec()
 
 	cleanPath, err := cleanRequestPath(r.URL.Path)
 	if err != nil {
@@ -134,8 +134,8 @@ func (s *gcsServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				"operation": "clean_path",
 			},
 		})
-		errorTotal.WithLabelValues(r.URL.Path, "invalid_path").Inc()
-		requestsTotal.WithLabelValues(r.URL.Path, r.Method, "400").Inc()
+		errorTotal.WithLabelValues(s.bucketName, r.URL.Path, "invalid_path").Inc()
+		requestsTotal.WithLabelValues(s.bucketName, r.URL.Path, r.Method, "400").Inc()
 		http.Error(w, "Invalid path", http.StatusBadRequest)
 		return
 	}
@@ -143,7 +143,7 @@ func (s *gcsServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Track GCS operations timing
 	gcsStart := time.Now()
 	reader, attrs, err := s.store.GetObject(ctx, cleanPath)
-	gcsLatency.WithLabelValues("get_object").Observe(time.Since(gcsStart).Seconds())
+	gcsLatency.WithLabelValues(s.bucketName, "get_object").Observe(time.Since(gcsStart).Seconds())
 
 	if err != nil {
 		if err == storage.ErrObjectNotExist {
@@ -156,8 +156,8 @@ func (s *gcsServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					"status":    http.StatusNotFound,
 				},
 			})
-			errorTotal.WithLabelValues(cleanPath, "object_not_found").Inc()
-			requestsTotal.WithLabelValues(cleanPath, r.Method, "404").Inc()
+			errorTotal.WithLabelValues(s.bucketName, cleanPath, "object_not_found").Inc()
+			requestsTotal.WithLabelValues(s.bucketName, cleanPath, r.Method, "404").Inc()
 			http.NotFound(w, r)
 			return
 		}
@@ -170,15 +170,15 @@ func (s *gcsServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				"status":    http.StatusInternalServerError,
 			},
 		})
-		errorTotal.WithLabelValues(cleanPath, "storage_error").Inc()
-		requestsTotal.WithLabelValues(cleanPath, r.Method, "500").Inc()
+		errorTotal.WithLabelValues(s.bucketName, cleanPath, "storage_error").Inc()
+		requestsTotal.WithLabelValues(s.bucketName, cleanPath, r.Method, "500").Inc()
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	defer reader.Close()
 
 	// Track object size
-	objectSize.WithLabelValues(cleanPath).Observe(float64(attrs.Size))
+	objectSize.WithLabelValues(s.bucketName, cleanPath).Observe(float64(attrs.Size))
 
 	w.Header().Set("Content-Type", attrs.ContentType)
 
@@ -193,16 +193,16 @@ func (s *gcsServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				"operation": "copy_contents",
 			},
 		})
-		errorTotal.WithLabelValues(cleanPath, "copy_error").Inc()
-		requestsTotal.WithLabelValues(cleanPath, r.Method, "500").Inc()
+		errorTotal.WithLabelValues(s.bucketName, cleanPath, "copy_error").Inc()
+		requestsTotal.WithLabelValues(s.bucketName, cleanPath, r.Method, "500").Inc()
 	} else {
-		requestsTotal.WithLabelValues(cleanPath, r.Method, "200").Inc()
-		bytesTransferred.WithLabelValues(cleanPath, r.Method, "download").Add(float64(written))
+		requestsTotal.WithLabelValues(s.bucketName, cleanPath, r.Method, "200").Inc()
+		bytesTransferred.WithLabelValues(s.bucketName, cleanPath, r.Method, "download").Add(float64(written))
 	}
 
 	// Record request duration
 	duration := time.Since(start).Seconds()
-	requestDuration.WithLabelValues(cleanPath, r.Method).Observe(duration)
+	requestDuration.WithLabelValues(s.bucketName, cleanPath, r.Method).Observe(duration)
 }
 
 func readyzHandler(w http.ResponseWriter, r *http.Request) {
