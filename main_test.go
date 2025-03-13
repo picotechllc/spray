@@ -157,7 +157,7 @@ func TestRun(t *testing.T) {
 
 	// Create a config for testing
 	cfg := &config{
-		port:       "8080",
+		port:       "0", // Use port 0 to let the OS choose a free port
 		bucketName: "test-bucket",
 		projectID:  "test-project",
 	}
@@ -166,6 +166,21 @@ func TestRun(t *testing.T) {
 	srv, err := setupServer(ctx, cfg)
 	require.NoError(t, err)
 
-	err = run(ctx, srv)
-	require.NoError(t, err)
+	// Start server in a goroutine
+	errChan := make(chan error, 1)
+	go func() {
+		errChan <- run(ctx, srv)
+	}()
+
+	// Wait for either error or timeout
+	select {
+	case err := <-errChan:
+		require.NoError(t, err)
+	case <-time.After(200 * time.Millisecond):
+		// Cancel context to trigger shutdown
+		cancel()
+		// Wait for shutdown to complete
+		err := <-errChan
+		require.NoError(t, err)
+	}
 }
