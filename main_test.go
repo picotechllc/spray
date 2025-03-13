@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"testing"
 	"time"
 
+	"cloud.google.com/go/logging"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -18,6 +20,29 @@ type mockServer struct{}
 
 func (s *mockServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
+}
+
+// mockLogger implements logging.Logger interface for testing
+type mockLogger struct{}
+
+func (l *mockLogger) Log(e logging.Entry) {}
+func (l *mockLogger) Flush() error        { return nil }
+func (l *mockLogger) Close() error        { return nil }
+
+// mockLoggingClient implements a minimal logging client for testing
+type mockLoggingClient struct {
+	shouldFail bool
+}
+
+func (c *mockLoggingClient) Logger(logID string) *logging.Logger {
+	return &logging.Logger{}
+}
+
+func (c *mockLoggingClient) Close() error {
+	if c.shouldFail {
+		return fmt.Errorf("mock close error")
+	}
+	return nil
 }
 
 func TestLoadConfig(t *testing.T) {
@@ -92,36 +117,91 @@ func TestLoadConfig(t *testing.T) {
 	}
 }
 
-func TestSetupServer(t *testing.T) {
-	// Save original setupServer and restore after test
-	originalSetup := setupServer
-	defer func() { setupServer = originalSetup }()
+func TestServerSetup(t *testing.T) {
+	tests := []struct {
+		name      string
+		setup     ServerSetup
+		cfg       *config
+		wantPort  string
+		wantPaths []string
+		wantErr   bool
+	}{
+		{
+			name: "successful setup",
+			setup: func(ctx context.Context, cfg *config) (*http.Server, error) {
+				mux := http.NewServeMux()
+				mux.Handle("/", &mockServer{})
+				mux.Handle("/metrics", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.WriteHeader(http.StatusOK)
+				}))
+				mux.HandleFunc("/readyz", readyzHandler)
+				mux.HandleFunc("/livez", livezHandler)
 
-	// Create mock setup function
-	setupServer = func(ctx context.Context, cfg *config) (*http.Server, error) {
-		mux := http.NewServeMux()
-		mux.Handle("/", &mockServer{})
-		mux.Handle("/metrics", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusOK)
-		}))
-		mux.HandleFunc("/readyz", readyzHandler)
-		mux.HandleFunc("/livez", livezHandler)
-
-		return &http.Server{
-			Addr:    ":" + cfg.port,
-			Handler: mux,
-		}, nil
+				return &http.Server{
+					Addr:    ":" + cfg.port,
+					Handler: mux,
+				}, nil
+			},
+			cfg: &config{
+				port:       "8080",
+				bucketName: "test-bucket",
+				projectID:  "test-project",
+			},
+			wantPort: ":8080",
+			wantPaths: []string{
+				"/",
+				"/metrics",
+				"/readyz",
+				"/livez",
+			},
+			wantErr: false,
+		},
+		{
+			name: "setup error",
+			setup: func(ctx context.Context, cfg *config) (*http.Server, error) {
+				return nil, fmt.Errorf("mock setup error")
+			},
+			cfg: &config{
+				port:       "8080",
+				bucketName: "test-bucket",
+				projectID:  "test-project",
+			},
+			wantErr: true,
+		},
 	}
 
-	cfg := &config{
-		port:       "8080",
-		bucketName: "test-bucket",
-		projectID:  "test-project",
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Save original setupServer and restore after test
+			originalSetup := setupServer
+			defer func() { setupServer = originalSetup }()
 
-	srv, err := setupServer(context.Background(), cfg)
-	require.NoError(t, err)
-	assert.Equal(t, ":8080", srv.Addr)
+			// Set test setup function
+			setupServer = tt.setup
+
+			// Run the setup
+			srv, err := setupServer(context.Background(), tt.cfg)
+			if tt.wantErr {
+				assert.Error(t, err)
+				return
+			}
+
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantPort, srv.Addr)
+
+			// Test that all expected paths are registered
+			if len(tt.wantPaths) > 0 {
+				mux, ok := srv.Handler.(*http.ServeMux)
+				require.True(t, ok, "Handler should be *http.ServeMux")
+
+				for _, path := range tt.wantPaths {
+					h, pattern := mux.Handler(&http.Request{URL: &url.URL{Path: path}})
+					assert.NotNil(t, h, "Handler should be registered for path %s", path)
+					assert.Equal(t, path, pattern, "Path %s should be registered", path)
+				}
+			}
+		})
+	}
 }
 
 func TestRun(t *testing.T) {
