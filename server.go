@@ -2,13 +2,11 @@ package main
 
 import (
 	"context"
-	"expvar"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"strings"
-	"sync"
 	"time"
 
 	"cloud.google.com/go/logging"
@@ -42,16 +40,10 @@ func (s *GCSObjectStore) GetObject(ctx context.Context, path string) (io.ReadClo
 }
 
 type gcsServer struct {
-	store        ObjectStore
-	bucketName   string
-	objectCounts sync.Map
-	logger       *logging.Logger
+	store      ObjectStore
+	bucketName string
+	logger     *logging.Logger
 }
-
-var (
-	objectsServed = expvar.NewInt("objects_served")
-	totalDuration = expvar.NewInt("total_duration_ms")
-)
 
 func newGCSServer(ctx context.Context, bucketName string, logger *logging.Logger) (*gcsServer, error) {
 	client, err := storage.NewClient(ctx)
@@ -128,6 +120,10 @@ func (s *gcsServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	ctx := r.Context()
 
+	// Track active requests
+	activeRequests.Inc()
+	defer activeRequests.Dec()
+
 	cleanPath, err := cleanRequestPath(r.URL.Path)
 	if err != nil {
 		s.logger.Log(logging.Entry{
@@ -138,6 +134,7 @@ func (s *gcsServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				"operation": "clean_path",
 			},
 		})
+		requestsTotal.WithLabelValues(r.URL.Path, r.Method, "400").Inc()
 		http.Error(w, "Invalid path", http.StatusBadRequest)
 		return
 	}
@@ -154,6 +151,7 @@ func (s *gcsServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					"status":    http.StatusNotFound,
 				},
 			})
+			requestsTotal.WithLabelValues(cleanPath, r.Method, "404").Inc()
 			http.NotFound(w, r)
 			return
 		}
@@ -166,6 +164,7 @@ func (s *gcsServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				"status":    http.StatusInternalServerError,
 			},
 		})
+		requestsTotal.WithLabelValues(cleanPath, r.Method, "500").Inc()
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -173,8 +172,9 @@ func (s *gcsServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", attrs.ContentType)
 
-	// Copy the object contents to the response
-	if _, err := io.Copy(w, reader); err != nil {
+	// Copy the object contents to the response while tracking bytes transferred
+	written, err := io.Copy(w, reader)
+	if err != nil {
 		s.logger.Log(logging.Entry{
 			Severity: logging.Error,
 			Payload: map[string]any{
@@ -183,16 +183,15 @@ func (s *gcsServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				"operation": "copy_contents",
 			},
 		})
+		requestsTotal.WithLabelValues(cleanPath, r.Method, "500").Inc()
+	} else {
+		requestsTotal.WithLabelValues(cleanPath, r.Method, "200").Inc()
+		bytesTransferred.WithLabelValues(cleanPath, r.Method, "download").Add(float64(written))
 	}
 
-	duration := time.Since(start).Milliseconds()
-	objectsServed.Add(1)
-	totalDuration.Add(duration)
-
-	// Update per-object counter
-	metricKey := fmt.Sprintf("%s/%s", s.bucketName, cleanPath)
-	count, _ := s.objectCounts.LoadOrStore(metricKey, new(expvar.Int))
-	count.(*expvar.Int).Add(1)
+	// Record request duration
+	duration := time.Since(start).Seconds()
+	requestDuration.WithLabelValues(cleanPath, r.Method).Observe(duration)
 }
 
 func readyzHandler(w http.ResponseWriter, r *http.Request) {
