@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"net/http/httptest"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -123,25 +125,11 @@ func TestSetupServer(t *testing.T) {
 }
 
 func TestRun(t *testing.T) {
-	// Save original setupServer and restore after test
-	originalSetup := setupServer
-	defer func() { setupServer = originalSetup }()
-
-	// Create mock setup function
-	setupServer = func(ctx context.Context, cfg *config) (*http.Server, error) {
-		mux := http.NewServeMux()
-		mux.Handle("/", &mockServer{})
-		mux.Handle("/metrics", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusOK)
-		}))
-		mux.HandleFunc("/readyz", readyzHandler)
-		mux.HandleFunc("/livez", livezHandler)
-
-		return &http.Server{
-			Addr:    ":" + cfg.port,
-			Handler: mux,
-		}, nil
-	}
+	// Create test server
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ts.Close()
 
 	// Set required environment variables
 	os.Setenv("BUCKET_NAME", "test-bucket")
@@ -155,32 +143,15 @@ func TestRun(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
-	// Create a config for testing
-	cfg := &config{
-		port:       "0", // Use port 0 to let the OS choose a free port
-		bucketName: "test-bucket",
-		projectID:  "test-project",
+	// Create server with the test server's port
+	srv := &http.Server{
+		Addr: ts.Listener.Addr().String(),
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}),
 	}
 
-	// Setup server
-	srv, err := setupServer(ctx, cfg)
+	// Run server and wait for shutdown
+	err := run(ctx, srv)
 	require.NoError(t, err)
-
-	// Start server in a goroutine
-	errChan := make(chan error, 1)
-	go func() {
-		errChan <- run(ctx, srv)
-	}()
-
-	// Wait for either error or timeout
-	select {
-	case err := <-errChan:
-		require.NoError(t, err)
-	case <-time.After(200 * time.Millisecond):
-		// Cancel context to trigger shutdown
-		cancel()
-		// Wait for shutdown to complete
-		err := <-errChan
-		require.NoError(t, err)
-	}
 }
