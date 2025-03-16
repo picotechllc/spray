@@ -18,7 +18,7 @@ import (
 type config struct {
 	port       string
 	bucketName string
-	projectID  string
+	projectID  string // optional: if not set, will use standard logging
 }
 
 // parseFlags parses command line flags and returns a config with just the flags set.
@@ -45,10 +45,8 @@ func loadConfig(base *config) (*config, error) {
 		return nil, fmt.Errorf("BUCKET_NAME environment variable is required")
 	}
 
+	// ProjectID is optional - if not set, we'll use standard logging
 	cfg.projectID = os.Getenv("GOOGLE_PROJECT_ID")
-	if cfg.projectID == "" {
-		return nil, fmt.Errorf("GOOGLE_PROJECT_ID environment variable is required")
-	}
 
 	return cfg, nil
 }
@@ -58,16 +56,27 @@ type ServerSetup func(context.Context, *config) (*http.Server, error)
 
 // setupServer is the default server setup implementation
 var setupServer ServerSetup = func(ctx context.Context, cfg *config) (*http.Server, error) {
-	client, err := logging.NewClient(ctx, cfg.projectID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create logging client: %v", err)
-	}
+	var logger *logging.Logger
+	var loggingClient *logging.Client
 
-	logger := client.Logger("gcs-server")
+	// Only attempt to create Cloud Logging client if projectID is set
+	if cfg.projectID != "" {
+		var err error
+		loggingClient, err = logging.NewClient(ctx, cfg.projectID)
+		if err != nil {
+			log.Printf("Warning: failed to create Cloud Logging client: %v. Falling back to standard logging.", err)
+		} else {
+			logger = loggingClient.Logger("gcs-server")
+		}
+	} else {
+		log.Printf("Info: GOOGLE_PROJECT_ID not set. Using standard logging.")
+	}
 
 	server, err := newGCSServer(ctx, cfg.bucketName, logger)
 	if err != nil {
-		client.Close()
+		if loggingClient != nil {
+			loggingClient.Close()
+		}
 		return nil, fmt.Errorf("failed to create GCS server: %v", err)
 	}
 

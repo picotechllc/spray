@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -43,18 +45,12 @@ type gcsServer struct {
 	store      ObjectStore
 	bucketName string
 	logger     *logging.Logger
+	stdLogger  *log.Logger
 }
 
 func newGCSServer(ctx context.Context, bucketName string, logger *logging.Logger) (*gcsServer, error) {
 	client, err := storage.NewClient(ctx)
 	if err != nil {
-		logger.Log(logging.Entry{
-			Severity: logging.Error,
-			Payload: map[string]any{
-				"error":     err.Error(),
-				"operation": "create_storage_client",
-			},
-		})
 		return nil, fmt.Errorf("failed to create client: %v", err)
 	}
 
@@ -62,11 +58,36 @@ func newGCSServer(ctx context.Context, bucketName string, logger *logging.Logger
 		bucket: client.Bucket(bucketName),
 	}
 
+	// Create a standard logger if no Cloud Logging logger is provided
+	var stdLogger *log.Logger
+	if logger == nil {
+		stdLogger = log.New(os.Stdout, "", log.LstdFlags)
+	}
+
 	return &gcsServer{
 		store:      store,
 		bucketName: bucketName,
 		logger:     logger,
+		stdLogger:  stdLogger,
 	}, nil
+}
+
+// logEntry handles logging through either Cloud Logging or standard logging
+func (s *gcsServer) logEntry(severity logging.Severity, payload map[string]any) {
+	if s.logger != nil {
+		s.logger.Log(logging.Entry{
+			Severity: severity,
+			Payload:  payload,
+		})
+		return
+	}
+
+	// Format the payload for standard logging
+	msg := fmt.Sprintf("[%s] ", severity)
+	for k, v := range payload {
+		msg += fmt.Sprintf("%s=%v ", k, v)
+	}
+	s.stdLogger.Println(msg)
 }
 
 // cleanRequestPath normalizes and validates the request path.
@@ -126,13 +147,10 @@ func (s *gcsServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	cleanPath, err := cleanRequestPath(r.URL.Path)
 	if err != nil {
-		s.logger.Log(logging.Entry{
-			Severity: logging.Error,
-			Payload: map[string]any{
-				"error":     err.Error(),
-				"path":      r.URL.Path,
-				"operation": "clean_path",
-			},
+		s.logEntry(logging.Error, map[string]any{
+			"error":     err.Error(),
+			"path":      r.URL.Path,
+			"operation": "clean_path",
 		})
 		errorTotal.WithLabelValues(s.bucketName, r.URL.Path, "invalid_path").Inc()
 		requestsTotal.WithLabelValues(s.bucketName, r.URL.Path, r.Method, "400").Inc()
@@ -147,28 +165,22 @@ func (s *gcsServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if err != nil {
 		if err == storage.ErrObjectNotExist {
-			s.logger.Log(logging.Entry{
-				Severity: logging.Warning,
-				Payload: map[string]any{
-					"error":     err.Error(),
-					"path":      cleanPath,
-					"operation": "get_object",
-					"status":    http.StatusNotFound,
-				},
+			s.logEntry(logging.Warning, map[string]any{
+				"error":     err.Error(),
+				"path":      cleanPath,
+				"operation": "get_object",
+				"status":    http.StatusNotFound,
 			})
 			errorTotal.WithLabelValues(s.bucketName, cleanPath, "object_not_found").Inc()
 			requestsTotal.WithLabelValues(s.bucketName, cleanPath, r.Method, "404").Inc()
 			http.NotFound(w, r)
 			return
 		}
-		s.logger.Log(logging.Entry{
-			Severity: logging.Error,
-			Payload: map[string]any{
-				"error":     err.Error(),
-				"path":      cleanPath,
-				"operation": "get_object",
-				"status":    http.StatusInternalServerError,
-			},
+		s.logEntry(logging.Error, map[string]any{
+			"error":     err.Error(),
+			"path":      cleanPath,
+			"operation": "get_object",
+			"status":    http.StatusInternalServerError,
 		})
 		errorTotal.WithLabelValues(s.bucketName, cleanPath, "storage_error").Inc()
 		requestsTotal.WithLabelValues(s.bucketName, cleanPath, r.Method, "500").Inc()
@@ -185,13 +197,10 @@ func (s *gcsServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Copy the object contents to the response while tracking bytes transferred
 	written, err := io.Copy(w, reader)
 	if err != nil {
-		s.logger.Log(logging.Entry{
-			Severity: logging.Error,
-			Payload: map[string]any{
-				"error":     err.Error(),
-				"path":      cleanPath,
-				"operation": "copy_contents",
-			},
+		s.logEntry(logging.Error, map[string]any{
+			"error":     err.Error(),
+			"path":      cleanPath,
+			"operation": "copy_contents",
 		})
 		errorTotal.WithLabelValues(s.bucketName, cleanPath, "copy_error").Inc()
 		requestsTotal.WithLabelValues(s.bucketName, cleanPath, r.Method, "500").Inc()
