@@ -1,0 +1,45 @@
+name: Test
+
+on:
+  pull_request:
+    branches: [ main ]
+  push:
+    branches: [ main ]
+    paths-ignore:
+      - '**'
+      - '!.github/workflows/**'
+
+jobs:
+  test:
+    name: Test with Coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          cache: true
+
+      - name: Run Tests with Coverage
+        id: test
+        continue-on-error: true
+        run: go test -v -race -coverprofile=coverage.txt -covermode=atomic ./...
+
+      - name: Convert coverage to lcov
+        if: always()
+        uses: jandelgado/gcov2lcov-action@v1.0.9
+        with:
+          infile: coverage.txt
+          outfile: coverage.lcov
+
+      - name: Send coverage to Coveralls
+        if: always()
+        uses: coverallsapp/github-action@v2
+        with:
+          file: coverage.lcov
+
+      - name: Check test status
+        if: steps.test.outcome == 'failure'
+        run: exit 1 
