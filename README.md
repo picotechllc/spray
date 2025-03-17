@@ -31,6 +31,49 @@ These metrics provide visibility into:
 - GCS operation performance
 
 
+## Development
+
+This project uses [Just](https://github.com/casey/just) as a command runner. To get started:
+
+1. Install Just:
+   ```bash
+   # macOS
+   brew install just
+
+   # Linux
+   curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | bash
+
+   # Windows
+   choco install just
+   ```
+
+2. Install development dependencies:
+   ```bash
+   just setup
+   ```
+
+3. View available commands:
+   ```bash
+   just
+   ```
+
+### Common Commands
+
+- `just build` - Build the binary
+- `just test` - Run tests with race detection and coverage
+- `just coverage` - Run tests and view coverage report in browser
+- `just fmt` - Format code
+- `just lint` - Run linters
+- `just check` - Run all pre-commit checks (format, lint, test)
+- `just docker-build` - Build Docker image
+- `just docker-run` - Run Docker container (requires credentials)
+
+For local development with Docker:
+```bash
+# Build and run with Docker
+just docker-run
+```
+
 ## Installation
 
 1. Clone the repository:
@@ -43,19 +86,19 @@ These metrics provide visibility into:
     ```
 3. Build the project:
     ```sh
-    go build
+    just build
     ```
 
 ## Usage
 
 Build the Docker image:
 ```sh
-docker build -t spray .
+just docker-build
 ```
 
 Run the Docker container:
 ```sh
-docker run -e BUCKET_NAME=my-bucket -p 8080:8080 spray
+just docker-run
 ```
 
 The server will start and serve the contents of my-bucket bucket on port 8080.
