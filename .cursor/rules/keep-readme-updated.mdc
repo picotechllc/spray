@@ -1,0 +1,7 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+
+After modifying other files in the project, check if README.md requires any updates, and suggest those updates as well.

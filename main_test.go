@@ -3,10 +3,12 @@ package main
 import (
 	"context"
 	"fmt"
-	"net"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -23,72 +25,87 @@ func (s *mockServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func TestLoadConfig(t *testing.T) {
 	tests := []struct {
-		name       string
-		basePort   string
-		expectPort string
-		envs       map[string]string
-		wantErr    bool
+		name        string
+		base        *config
+		envVars     map[string]string
+		want        *config
+		wantErr     bool
+		errContains string
 	}{
 		{
-			name:       "valid config with default port",
-			expectPort: "8080",
-			envs: map[string]string{
+			name: "default config with required env vars",
+			envVars: map[string]string{
 				"BUCKET_NAME":       "test-bucket",
 				"GOOGLE_PROJECT_ID": "test-project",
 			},
+			want: &config{
+				port:       "8080",
+				bucketName: "test-bucket",
+				projectID:  "test-project",
+			},
 		},
 		{
-			name:       "valid config with custom port",
-			basePort:   "9090",
-			expectPort: "9090",
-			envs: map[string]string{
+			name: "override port from base config",
+			base: &config{port: "9000"},
+			envVars: map[string]string{
 				"BUCKET_NAME":       "test-bucket",
 				"GOOGLE_PROJECT_ID": "test-project",
 			},
+			want: &config{
+				port:       "9000",
+				bucketName: "test-bucket",
+				projectID:  "test-project",
+			},
 		},
 		{
-			name: "missing bucket name",
-			envs: map[string]string{
-				"GOOGLE_PROJECT_ID": "test-project",
-			},
-			wantErr: true,
+			name:        "missing bucket name",
+			wantErr:     true,
+			errContains: "BUCKET_NAME environment variable is required",
 		},
 		{
 			name: "missing project ID",
-			envs: map[string]string{
+			envVars: map[string]string{
 				"BUCKET_NAME": "test-bucket",
 			},
-			wantErr: true,
+			wantErr:     true,
+			errContains: "GOOGLE_PROJECT_ID environment variable is required",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Clear environment variables
-			os.Unsetenv("BUCKET_NAME")
-			os.Unsetenv("GOOGLE_PROJECT_ID")
+			// Clear environment
+			os.Clearenv()
 
 			// Set test environment variables
-			for k, v := range tt.envs {
+			for k, v := range tt.envVars {
 				os.Setenv(k, v)
 			}
 
-			// Create base config if port is specified
-			var base *config
-			if tt.basePort != "" {
-				base = &config{port: tt.basePort}
-			}
-
-			cfg, err := loadConfig(base)
-			if tt.wantErr {
-				assert.Error(t, err)
+			got, err := loadConfig(tt.base)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("loadConfig() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 
-			require.NoError(t, err)
-			assert.Equal(t, tt.expectPort, cfg.port)
-			assert.Equal(t, tt.envs["BUCKET_NAME"], cfg.bucketName)
-			assert.Equal(t, tt.envs["GOOGLE_PROJECT_ID"], cfg.projectID)
+			if tt.wantErr {
+				if err == nil {
+					t.Error("loadConfig() error = nil, want error")
+				} else if !strings.Contains(err.Error(), tt.errContains) {
+					t.Errorf("loadConfig() error = %v, want error containing %q", err, tt.errContains)
+				}
+				return
+			}
+
+			if got.port != tt.want.port {
+				t.Errorf("loadConfig() port = %v, want %v", got.port, tt.want.port)
+			}
+			if got.bucketName != tt.want.bucketName {
+				t.Errorf("loadConfig() bucketName = %v, want %v", got.bucketName, tt.want.bucketName)
+			}
+			if got.projectID != tt.want.projectID {
+				t.Errorf("loadConfig() projectID = %v, want %v", got.projectID, tt.want.projectID)
+			}
 		})
 	}
 }
@@ -190,7 +207,7 @@ func TestRun(t *testing.T) {
 		mux := http.NewServeMux()
 		mux.Handle("/", &mockServer{})
 		return &http.Server{
-			Addr:    ":0",
+			Addr:    "127.0.0.1:8081", // Use fixed port for testing
 			Handler: mux,
 		}, nil
 	}
@@ -208,7 +225,7 @@ func TestRun(t *testing.T) {
 	// Start the server in a goroutine
 	go func() {
 		cfg := &config{
-			port:       ":0",
+			port:       "8081",
 			bucketName: "test-bucket",
 			projectID:  "test-project",
 		}
@@ -220,22 +237,11 @@ func TestRun(t *testing.T) {
 			return
 		}
 
-		// Get the actual port assigned by the OS
-		listener, err := net.Listen("tcp", ":0")
-		if err != nil {
-			errChan <- fmt.Errorf("failed to listen: %v", err)
-			return
-		}
-		defer listener.Close()
-
-		// Update server address with actual listener address
-		srv.Addr = listener.Addr().String()
-
 		// Signal that we're ready to serve
 		close(started)
 
-		// Serve with the listener
-		if err := srv.Serve(listener); err != http.ErrServerClosed {
+		// Start the server
+		if err := srv.ListenAndServe(); err != http.ErrServerClosed {
 			errChan <- fmt.Errorf("server error: %v", err)
 		}
 	}()
@@ -250,4 +256,178 @@ func TestRun(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal("timeout waiting for server to start")
 	}
+}
+
+func TestReadyzHandler(t *testing.T) {
+	tests := []struct {
+		name       string
+		method     string
+		wantStatus int
+		wantBody   string
+	}{
+		{
+			name:       "GET request",
+			method:     "GET",
+			wantStatus: http.StatusOK,
+			wantBody:   "ok",
+		},
+		{
+			name:       "POST request",
+			method:     "POST",
+			wantStatus: http.StatusOK,
+			wantBody:   "ok",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req, err := http.NewRequest(tt.method, "/readyz", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			rr := newTestResponseRecorder()
+			handler := http.HandlerFunc(readyzHandler)
+			handler.ServeHTTP(rr, req)
+
+			if status := rr.Code; status != tt.wantStatus {
+				t.Errorf("handler returned wrong status code: got %v want %v",
+					status, tt.wantStatus)
+			}
+
+			if rr.Body.String() != tt.wantBody {
+				t.Errorf("handler returned unexpected body: got %v want %v",
+					rr.Body.String(), tt.wantBody)
+			}
+		})
+	}
+}
+
+func TestLivezHandler(t *testing.T) {
+	tests := []struct {
+		name       string
+		method     string
+		wantStatus int
+		wantBody   string
+	}{
+		{
+			name:       "GET request",
+			method:     "GET",
+			wantStatus: http.StatusOK,
+			wantBody:   "ok",
+		},
+		{
+			name:       "POST request",
+			method:     "POST",
+			wantStatus: http.StatusOK,
+			wantBody:   "ok",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req, err := http.NewRequest(tt.method, "/livez", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			rr := newTestResponseRecorder()
+			handler := http.HandlerFunc(livezHandler)
+			handler.ServeHTTP(rr, req)
+
+			if status := rr.Code; status != tt.wantStatus {
+				t.Errorf("handler returned wrong status code: got %v want %v",
+					status, tt.wantStatus)
+			}
+
+			if rr.Body.String() != tt.wantBody {
+				t.Errorf("handler returned unexpected body: got %v want %v",
+					rr.Body.String(), tt.wantBody)
+			}
+		})
+	}
+}
+
+func TestGracefulShutdown(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Skipping test on Windows due to socket provider issues")
+		return
+	}
+
+	// Create a test server with a handler that simulates work
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(100 * time.Millisecond) // Simulate work
+		w.WriteHeader(http.StatusOK)
+	})
+
+	// Create a test server
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	// Create channels for synchronization
+	requestDone := make(chan struct{})
+
+	// Start a long request in a goroutine
+	go func() {
+		defer close(requestDone)
+		resp, err := http.Get(server.URL)
+		if err != nil {
+			// Ignore expected errors during shutdown
+			if !strings.Contains(err.Error(), "connection refused") &&
+				!strings.Contains(err.Error(), "EOF") {
+				t.Logf("Request error: %v", err)
+			}
+			return
+		}
+		defer resp.Body.Close()
+	}()
+
+	// Wait briefly for the request to start
+	time.Sleep(50 * time.Millisecond)
+
+	// Create a context with timeout for shutdown
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+
+	// Initiate graceful shutdown
+	if err := server.Config.Shutdown(ctx); err != nil {
+		t.Errorf("Graceful shutdown failed: %v", err)
+	}
+
+	// Wait for request completion
+	select {
+	case <-requestDone:
+		// Request completed
+	case <-time.After(1 * time.Second):
+		t.Error("Timeout waiting for server to shut down")
+	}
+}
+
+// Helper functions
+
+func contains(s, substr string) bool {
+	return s != "" && substr != "" && s != substr && len(s) > len(substr) && s[len(s)-len(substr):] == substr
+}
+
+type responseRecorder struct {
+	Code int
+	Body *strings.Builder
+}
+
+func newTestResponseRecorder() *responseRecorder {
+	return &responseRecorder{
+		Body: &strings.Builder{},
+	}
+}
+
+func (r *responseRecorder) Header() http.Header {
+	return http.Header{}
+}
+
+func (r *responseRecorder) Write(p []byte) (int, error) {
+	return r.Body.Write(p)
+}
+
+func (r *responseRecorder) WriteHeader(code int) {
+	r.Code = code
 }

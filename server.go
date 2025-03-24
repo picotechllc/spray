@@ -18,6 +18,11 @@ type ObjectStore interface {
 	GetObject(ctx context.Context, path string) (io.ReadCloser, *storage.ObjectAttrs, error)
 }
 
+// Logger defines the interface for logging operations
+type Logger interface {
+	Log(e logging.Entry)
+}
+
 // GCSObjectStore implements ObjectStore using Google Cloud Storage
 type GCSObjectStore struct {
 	bucket *storage.BucketHandle
@@ -42,7 +47,7 @@ func (s *GCSObjectStore) GetObject(ctx context.Context, path string) (io.ReadClo
 type gcsServer struct {
 	store      ObjectStore
 	bucketName string
-	logger     *logging.Logger
+	logger     Logger
 }
 
 func newGCSServer(ctx context.Context, bucketName string, logger *logging.Logger) (*gcsServer, error) {
@@ -75,17 +80,20 @@ func newGCSServer(ctx context.Context, bucketName string, logger *logging.Logger
 // 2. Multiple slashes removal
 // 3. Directory index handling
 // 4. Directory traversal prevention
-// Returns the cleaned path and an error if the path is invalid
-func cleanRequestPath(path string) (string, error) {
+// Returns:
+// - The cleaned path
+// - An error if the path is invalid
+// - A boolean indicating if a redirect is needed (e.g., for directories without trailing slash)
+func cleanRequestPath(path string) (string, error, bool) {
 	// URL decode the path
 	decodedPath, err := url.PathUnescape(path)
 	if err != nil {
-		return "", fmt.Errorf("error decoding path: %v", err)
+		return "", fmt.Errorf("error decoding path: %v", err), false
 	}
 
 	// Handle root path
 	if decodedPath == "/" {
-		return "index.html", nil
+		return "index.html", nil, false
 	}
 
 	// Remove leading slash and normalize multiple slashes
@@ -99,21 +107,28 @@ func cleanRequestPath(path string) (string, error) {
 
 	// Handle empty path
 	if len(normalizedParts) == 0 {
-		return "index.html", nil
+		return "index.html", nil, false
 	}
 
 	// Join parts and handle directory paths
 	cleanPath := strings.Join(normalizedParts, "/")
-	if decodedPath[len(decodedPath)-1] == '/' {
-		cleanPath += "/index.html"
-	}
 
 	// Prevent directory traversal
 	if strings.Contains(cleanPath, "..") {
-		return "", fmt.Errorf("invalid path: directory traversal attempt")
+		return "", fmt.Errorf("invalid path: directory traversal attempt"), false
 	}
 
-	return cleanPath, nil
+	// Handle directory paths
+	if decodedPath[len(decodedPath)-1] == '/' {
+		return cleanPath + "/index.html", nil, false
+	}
+
+	// Check if this might be a directory without trailing slash
+	if !strings.Contains(cleanPath, ".") {
+		return cleanPath + "/", nil, true
+	}
+
+	return cleanPath, nil, false
 }
 
 func (s *gcsServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -124,7 +139,7 @@ func (s *gcsServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	activeRequests.WithLabelValues(s.bucketName).Inc()
 	defer activeRequests.WithLabelValues(s.bucketName).Dec()
 
-	cleanPath, err := cleanRequestPath(r.URL.Path)
+	cleanPath, err, needsRedirect := cleanRequestPath(r.URL.Path)
 	if err != nil {
 		s.logger.Log(logging.Entry{
 			Severity: logging.Error,
@@ -137,6 +152,12 @@ func (s *gcsServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		errorTotal.WithLabelValues(s.bucketName, r.URL.Path, "invalid_path").Inc()
 		requestsTotal.WithLabelValues(s.bucketName, r.URL.Path, r.Method, "400").Inc()
 		http.Error(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
+
+	if needsRedirect {
+		http.Redirect(w, r, r.URL.Path+"/", http.StatusMovedPermanently)
+		requestsTotal.WithLabelValues(s.bucketName, cleanPath, r.Method, "301").Inc()
 		return
 	}
 

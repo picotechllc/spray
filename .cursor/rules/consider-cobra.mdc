@@ -1,0 +1,8 @@
+---
+description: 
+globs: *.go
+alwaysApply: false
+---
+Consider https://github.com/spf13/cobra for arg parsing, flags, env var, and config wrangling.
+
+For example if we have our own parseFlags function we might prefer to reimplement as explained at https://cobra.dev/

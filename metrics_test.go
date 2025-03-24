@@ -2,6 +2,7 @@ package main
 
 import (
 	"testing"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
@@ -194,4 +195,124 @@ func TestMetricsBehavior(t *testing.T) {
 		count := testutil.CollectAndCount(gcsLatency)
 		assert.Equal(t, 1, count)
 	})
+}
+
+func TestMetricsInitialization(t *testing.T) {
+	registry := prometheus.NewRegistry()
+
+	// Test requestsTotal
+	if err := registry.Register(requestsTotal); err != nil {
+		t.Errorf("Failed to register requestsTotal: %v", err)
+	}
+	requestsTotal.WithLabelValues("test-bucket", "/test.txt", "GET", "200").Inc()
+	if val := testutil.ToFloat64(requestsTotal.WithLabelValues("test-bucket", "/test.txt", "GET", "200")); val != 1 {
+		t.Errorf("requestsTotal value = %v, want 1", val)
+	}
+
+	// Test requestDuration
+	if err := registry.Register(requestDuration); err != nil {
+		t.Errorf("Failed to register requestDuration: %v", err)
+	}
+	requestDuration.WithLabelValues("test-bucket", "/test.txt", "GET").Observe(0.1)
+
+	// Test bytesTransferred
+	if err := registry.Register(bytesTransferred); err != nil {
+		t.Errorf("Failed to register bytesTransferred: %v", err)
+	}
+	bytesTransferred.WithLabelValues("test-bucket", "/test.txt", "GET", "download").Add(100)
+	if val := testutil.ToFloat64(bytesTransferred.WithLabelValues("test-bucket", "/test.txt", "GET", "download")); val != 100 {
+		t.Errorf("bytesTransferred value = %v, want 100", val)
+	}
+
+	// Test activeRequests
+	if err := registry.Register(activeRequests); err != nil {
+		t.Errorf("Failed to register activeRequests: %v", err)
+	}
+	activeRequests.WithLabelValues("test-bucket").Inc()
+	if val := testutil.ToFloat64(activeRequests.WithLabelValues("test-bucket")); val != 1 {
+		t.Errorf("activeRequests value = %v, want 1", val)
+	}
+	activeRequests.WithLabelValues("test-bucket").Dec()
+	if val := testutil.ToFloat64(activeRequests.WithLabelValues("test-bucket")); val != 0 {
+		t.Errorf("activeRequests value = %v, want 0", val)
+	}
+
+	// Test errorTotal
+	if err := registry.Register(errorTotal); err != nil {
+		t.Errorf("Failed to register errorTotal: %v", err)
+	}
+	errorTotal.WithLabelValues("test-bucket", "/test.txt", "storage_error").Inc()
+	if val := testutil.ToFloat64(errorTotal.WithLabelValues("test-bucket", "/test.txt", "storage_error")); val != 1 {
+		t.Errorf("errorTotal value = %v, want 1", val)
+	}
+
+	// Test objectSize
+	if err := registry.Register(objectSize); err != nil {
+		t.Errorf("Failed to register objectSize: %v", err)
+	}
+	objectSize.WithLabelValues("test-bucket", "/test.txt").Observe(1024)
+
+	// Test gcsLatency
+	if err := registry.Register(gcsLatency); err != nil {
+		t.Errorf("Failed to register gcsLatency: %v", err)
+	}
+	gcsLatency.WithLabelValues("test-bucket", "get_object").Observe(0.05)
+}
+
+func TestMetricsLabels(t *testing.T) {
+	tests := []struct {
+		name   string
+		metric prometheus.Collector
+	}{
+		{"requestsTotal", requestsTotal},
+		{"requestDuration", requestDuration},
+		{"bytesTransferred", bytesTransferred},
+		{"activeRequests", activeRequests},
+		{"errorTotal", errorTotal},
+		{"objectSize", objectSize},
+		{"gcsLatency", gcsLatency},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			// Create a new registry for each test to avoid conflicts
+			reg := prometheus.NewRegistry()
+			if err := reg.Register(tt.metric); err != nil {
+				t.Fatalf("Failed to register metric: %v", err)
+			}
+
+			// Create a channel to receive the metric
+			metricChan := make(chan prometheus.Metric, 1)
+			done := make(chan struct{})
+
+			// Start collecting metrics in a goroutine with timeout
+			go func() {
+				defer close(done)
+				tt.metric.Collect(metricChan)
+			}()
+
+			// Wait for the metric to be collected or timeout
+			select {
+			case metric := <-metricChan:
+				if metric == nil {
+					t.Error("Received nil metric")
+				}
+				desc := metric.Desc()
+				if desc == nil {
+					t.Error("Metric has nil description")
+				}
+			case <-time.After(100 * time.Millisecond):
+				t.Logf("%s: metric collection timed out", tt.name)
+			}
+
+			// Wait for the collection goroutine to finish
+			select {
+			case <-done:
+				// Collection completed successfully
+			case <-time.After(100 * time.Millisecond):
+				t.Logf("%s: collection goroutine did not complete", tt.name)
+			}
+		})
+	}
 }

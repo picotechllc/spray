@@ -1,0 +1,44 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+---
+description: Terminal command formatting rules
+alwaysApply: true
+---
+
+# Terminal Command Formatting
+
+Never add any formatting characters to terminal commands. Always keep them entirely in plaintext.
+
+## Examples
+
+✅ Correct:
+```sh
+go test -v ./...
+```
+
+❌ Incorrect:
+```sh
+[200~go test -v ./...
+```
+
+## Why This Matters
+
+1. Bracketed paste mode sequences (`[200~`) are terminal control characters that can:
+   - Break command execution
+   - Cause commands to fail, sometimes silently and/or expensively
+   - Make commands difficult to copy/paste
+   
+2. This is especially important for:
+   - CI/CD pipelines
+   - Documentation
+   - Automated testing
+   - Shell scripts
+
+## Additional Guidelines
+
+- Avoid line continuations (`\`) when possible
+- Use `| cat` for commands that might invoke a pager (e.g., `git log | cat`)
+- For long commands, consider using a script file instead
