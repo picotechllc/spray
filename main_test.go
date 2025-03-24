@@ -405,10 +405,6 @@ func TestGracefulShutdown(t *testing.T) {
 
 // Helper functions
 
-func contains(s, substr string) bool {
-	return s != "" && substr != "" && s != substr && len(s) > len(substr) && s[len(s)-len(substr):] == substr
-}
-
 type responseRecorder struct {
 	Code int
 	Body *strings.Builder
