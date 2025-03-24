@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"io"
 	"log"
@@ -368,18 +367,6 @@ func TestCleanRequestPath(t *testing.T) {
 			}
 		})
 	}
-}
-
-type mockReadCloser struct {
-	*bytes.Reader
-	closeFunc func() error
-}
-
-func (m *mockReadCloser) Close() error {
-	if m.closeFunc != nil {
-		return m.closeFunc()
-	}
-	return nil
 }
 
 func TestGCSServer_ServeHTTP(t *testing.T) {
