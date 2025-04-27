@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -295,6 +296,25 @@ func TestNewGCSServer(t *testing.T) {
 	}
 	defer logClient.Close()
 	logger := logClient.Logger("test-logger")
+
+	// Create a mock storage client
+	mockStore := &mockObjectStore{
+		objects: make(map[string]mockObject),
+	}
+
+	// Override the newGCSServer function to use our mock store
+	originalNewGCSServer := newGCSServer
+	defer func() { newGCSServer = originalNewGCSServer }()
+	newGCSServer = func(ctx context.Context, bucketName string, logger *logging.Logger) (*gcsServer, error) {
+		if bucketName == "" {
+			return nil, fmt.Errorf("bucket name cannot be empty")
+		}
+		return &gcsServer{
+			store:      mockStore,
+			bucketName: bucketName,
+			logger:     logger,
+		}, nil
+	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
