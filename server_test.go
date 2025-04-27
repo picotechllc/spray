@@ -267,3 +267,66 @@ func TestCleanRequestPath(t *testing.T) {
 		})
 	}
 }
+
+func TestNewGCSServer(t *testing.T) {
+	tests := []struct {
+		name       string
+		bucketName string
+		wantErr    bool
+	}{
+		{
+			name:       "valid bucket name",
+			bucketName: "test-bucket",
+			wantErr:    false,
+		},
+		{
+			name:       "empty bucket name",
+			bucketName: "",
+			wantErr:    true,
+		},
+	}
+
+	ctx := context.Background()
+
+	// Create a mock logging client
+	logClient, err := logging.NewClient(ctx, "test-project", option.WithoutAuthentication())
+	if err != nil {
+		t.Fatalf("Failed to create mock logging client: %v", err)
+	}
+	defer logClient.Close()
+	logger := logClient.Logger("test-logger")
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server, err := newGCSServer(ctx, tt.bucketName, logger)
+			if tt.wantErr {
+				if err == nil {
+					t.Error("Expected error but got none")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Errorf("Unexpected error: %v", err)
+				return
+			}
+
+			if server == nil {
+				t.Error("Expected server to be non-nil")
+				return
+			}
+
+			if server.bucketName != tt.bucketName {
+				t.Errorf("Expected bucket name %q, got %q", tt.bucketName, server.bucketName)
+			}
+
+			if server.store == nil {
+				t.Error("Expected store to be non-nil")
+			}
+
+			if server.logger == nil {
+				t.Error("Expected logger to be non-nil")
+			}
+		})
+	}
+}

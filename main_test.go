@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"net"
 	"net/http"
@@ -249,5 +250,46 @@ func TestRun(t *testing.T) {
 		cancel() // Trigger shutdown after successful start
 	case <-ctx.Done():
 		t.Fatal("timeout waiting for server to start")
+	}
+}
+
+func TestParseFlags(t *testing.T) {
+	tests := []struct {
+		name     string
+		args     []string
+		wantPort string
+	}{
+		{
+			name:     "default port",
+			args:     []string{},
+			wantPort: "8080",
+		},
+		{
+			name:     "custom port",
+			args:     []string{"-port", "9090"},
+			wantPort: "9090",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Save original command line arguments
+			oldArgs := os.Args
+			defer func() { os.Args = oldArgs }()
+
+			// Set test arguments
+			os.Args = append([]string{"test"}, tt.args...)
+
+			// Reset flag.CommandLine to clear any previously set flags
+			flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
+
+			// Parse flags
+			cfg := parseFlags()
+
+			// Verify port
+			if cfg.port != tt.wantPort {
+				t.Errorf("parseFlags() port = %v, want %v", cfg.port, tt.wantPort)
+			}
+		})
 	}
 }
