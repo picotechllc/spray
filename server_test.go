@@ -317,11 +317,6 @@ func TestNewGCSServer(t *testing.T) {
 				return
 			}
 
-			if server == nil {
-				t.Error("Expected server to be non-nil")
-				return
-			}
-
 			if server.bucketName != tt.bucketName {
 				t.Errorf("Expected bucket name %q, got %q", tt.bucketName, server.bucketName)
 			}
