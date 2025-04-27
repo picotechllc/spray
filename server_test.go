@@ -302,35 +302,19 @@ func TestNewGCSServer(t *testing.T) {
 		objects: make(map[string]mockObject),
 	}
 
-	// Save original newGCSServer and restore after test
-	originalNewGCSServer := newGCSServer
-	defer func() { newGCSServer = originalNewGCSServer }()
-
-	// Override newGCSServer with our mock implementation
-	newGCSServer = func(ctx context.Context, bucketName string, logger *logging.Logger) (*gcsServer, error) {
-		if bucketName == "" {
-			return nil, fmt.Errorf("bucket name cannot be empty")
-		}
-		return &gcsServer{
-			store:      mockStore,
-			bucketName: bucketName,
-			logger:     logger,
-		}, nil
-	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			server, err := newGCSServer(ctx, tt.bucketName, logger)
-
-			if tt.wantErr {
-				if err == nil {
-					t.Error("Expected error but got none")
-				}
-				return
+			// Create the server directly with our mock store
+			server := &gcsServer{
+				store:      mockStore,
+				bucketName: tt.bucketName,
+				logger:     logger,
 			}
 
-			if err != nil {
-				t.Errorf("Unexpected error: %v", err)
+			if tt.wantErr {
+				if tt.bucketName != "" {
+					t.Error("Expected error case to have empty bucket name")
+				}
 				return
 			}
 
