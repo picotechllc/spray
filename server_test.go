@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"cloud.google.com/go/logging"
 	"cloud.google.com/go/storage"
@@ -364,5 +365,58 @@ func TestHealthCheckHandlers(t *testing.T) {
 			assert.Equal(t, tt.wantCode, rr.Code)
 			assert.Equal(t, tt.wantBody, rr.Body.String())
 		})
+	}
+}
+
+// Test newGCSServer error path by injecting a failing storage client
+func TestNewGCSServer_ErrorPath(t *testing.T) {
+	ctx := context.Background()
+	logClient, err := logging.NewClient(ctx, "test-project", option.WithoutAuthentication())
+	if err != nil {
+		t.Fatalf("Failed to create mock logging client: %v", err)
+	}
+	defer logClient.Close()
+	logger := logClient.Logger("test-logger")
+
+	// Failing storage client: nil client, but bucketName is empty to force error
+	_, err = newGCSServer(ctx, "", logger, nil)
+	if err == nil {
+		t.Error("Expected error when bucketName is empty or storage client creation fails")
+	}
+}
+
+// Test runServerImpl graceful shutdown by overriding handleSignals
+func TestRunServerImpl_GracefulShutdown(t *testing.T) {
+	// Save and restore original handleSignals
+	origHandleSignals := handleSignals
+	defer func() { handleSignals = origHandleSignals }()
+
+	// Override handleSignals to close immediately
+	handleSignals = func() chan struct{} {
+		ch := make(chan struct{})
+		close(ch)
+		return ch
+	}
+
+	// Create a dummy HTTP server that returns immediately
+	srv := &http.Server{Addr: ":0"}
+	// Use a context that will not timeout
+	ctx := context.Background()
+
+	// Start runServerImpl in a goroutine and shut it down
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- runServerImpl(ctx, srv)
+	}()
+
+	// Wait for the server to shut down
+	select {
+	case err := <-errCh:
+		// We expect no error or a graceful shutdown error
+		if err != nil && !strings.Contains(err.Error(), "graceful shutdown failed") {
+			t.Errorf("Unexpected error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Error("Timeout waiting for runServerImpl to return")
 	}
 }

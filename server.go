@@ -50,21 +50,25 @@ type gcsServer struct {
 	logger     *logging.Logger
 }
 
-func newGCSServer(ctx context.Context, bucketName string, logger *logging.Logger) (*gcsServer, error) {
-	client, err := storage.NewClient(ctx)
-	if err != nil {
-		logger.Log(logging.Entry{
-			Severity: logging.Error,
-			Payload: map[string]any{
-				"error":     err.Error(),
-				"operation": "create_storage_client",
-			},
-		})
-		return nil, fmt.Errorf("failed to create client: %v", err)
+// newGCSServer creates a new gcsServer with the provided storage client and logger.
+func newGCSServer(ctx context.Context, bucketName string, logger *logging.Logger, storageClient *storage.Client) (*gcsServer, error) {
+	if storageClient == nil {
+		var err error
+		storageClient, err = storage.NewClient(ctx)
+		if err != nil {
+			logger.Log(logging.Entry{
+				Severity: logging.Error,
+				Payload: map[string]any{
+					"error":     err.Error(),
+					"operation": "create_storage_client",
+				},
+			})
+			return nil, fmt.Errorf("failed to create client: %v", err)
+		}
 	}
 
 	store := &GCSObjectStore{
-		bucket: client.Bucket(bucketName),
+		bucket: storageClient.Bucket(bucketName),
 	}
 
 	return &gcsServer{
@@ -224,7 +228,7 @@ func livezHandler(w http.ResponseWriter, r *http.Request) {
 func createServer(ctx context.Context, cfg *config, logClient *logging.Client) (*http.Server, error) {
 	logger := logClient.Logger("gcs-server")
 
-	server, err := newGCSServer(ctx, cfg.bucketName, logger)
+	server, err := newGCSServer(ctx, cfg.bucketName, logger, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create GCS server: %v", err)
 	}
@@ -241,8 +245,11 @@ func createServer(ctx context.Context, cfg *config, logClient *logging.Client) (
 	}, nil
 }
 
-// handleSignals sets up signal handling and returns a channel that will be closed when a signal is received.
-func handleSignals() chan struct{} {
+// handleSignals is a package-level variable to allow overriding in tests.
+var handleSignals = handleSignalsImpl
+
+// handleSignalsImpl sets up signal handling and returns a channel that will be closed when a signal is received.
+func handleSignalsImpl() chan struct{} {
 	shutdown := make(chan struct{})
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
