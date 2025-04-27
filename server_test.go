@@ -53,6 +53,13 @@ func (s *mockObjectStore) GetObject(ctx context.Context, path string) (io.ReadCl
 	}, nil
 }
 
+// Mock ObjectStore that always returns a custom error for testing ServeHTTP error path
+type errorObjectStore struct{}
+
+func (s *errorObjectStore) GetObject(ctx context.Context, path string) (io.ReadCloser, *storage.ObjectAttrs, error) {
+	return nil, nil, assert.AnError
+}
+
 func TestPathHandling(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -418,5 +425,35 @@ func TestRunServerImpl_GracefulShutdown(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Error("Timeout waiting for runServerImpl to return")
+	}
+}
+
+// Test ServeHTTP with a storage error (not ErrObjectNotExist)
+func TestServeHTTP_StorageError(t *testing.T) {
+	ctx := context.Background()
+	logClient, err := logging.NewClient(ctx, "test-project", option.WithoutAuthentication())
+	if err != nil {
+		t.Fatalf("Failed to create mock logging client: %v", err)
+	}
+	defer logClient.Close()
+	logger := logClient.Logger("test-logger")
+
+	server := &gcsServer{
+		store:      &errorObjectStore{},
+		bucketName: "test-bucket",
+		logger:     logger,
+	}
+
+	req := httptest.NewRequest("GET", "/somefile.txt", nil)
+	w := httptest.NewRecorder()
+
+	server.ServeHTTP(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("Expected status %d, got %d", http.StatusInternalServerError, w.Code)
+	}
+
+	if !strings.Contains(w.Body.String(), assert.AnError.Error()) {
+		t.Errorf("Expected error message in response body, got %q", w.Body.String())
 	}
 }
