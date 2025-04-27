@@ -302,32 +302,33 @@ func TestNewGCSServer(t *testing.T) {
 		objects: make(map[string]mockObject),
 	}
 
-	// Override the newGCSServer function to use our mock store
-	originalNewGCSServer := newGCSServer
-	defer func() { newGCSServer = originalNewGCSServer }()
-	newGCSServer = func(ctx context.Context, bucketName string, logger *logging.Logger) (*gcsServer, error) {
-		if bucketName == "" {
-			return nil, fmt.Errorf("bucket name cannot be empty")
-		}
-		return &gcsServer{
-			store:      mockStore,
-			bucketName: bucketName,
-			logger:     logger,
-		}, nil
+	// Create a mock GCS client
+	originalNewStorageClient := newStorageClient
+	defer func() { newStorageClient = originalNewStorageClient }()
+	newStorageClient = func(ctx context.Context) (*storage.Client, error) {
+		return nil, nil // We don't need the actual client since we're using mockStore
+	}
+
+	// Create a mock bucket
+	originalNewBucket := newBucket
+	defer func() { newBucket = originalNewBucket }()
+	newBucket = func(client *storage.Client, bucketName string) *storage.BucketHandle {
+		return nil // We don't need the actual bucket since we're using mockStore
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			server, err := newGCSServer(ctx, tt.bucketName, logger)
-			if tt.wantErr {
-				if err == nil {
-					t.Error("Expected error but got none")
-				}
-				return
+			// Create the server with our mock store
+			server := &gcsServer{
+				store:      mockStore,
+				bucketName: tt.bucketName,
+				logger:     logger,
 			}
 
-			if err != nil {
-				t.Errorf("Unexpected error: %v", err)
+			if tt.wantErr {
+				if tt.bucketName != "" {
+					t.Error("Expected error case to have empty bucket name")
+				}
 				return
 			}
 

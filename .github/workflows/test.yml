@@ -68,7 +68,11 @@ jobs:
 
       - name: Run Integration Tests
         id: integration_test
-        run: go test -v -tags=integration ./...
+        run: |
+          go test -v -tags=integration -coverprofile=integration-coverage.txt ./...
+          if [ -f integration-coverage.txt ]; then
+            cat integration-coverage.txt >> coverage.txt
+          fi
 
       - name: Log Integration Test Status
         if: always()
