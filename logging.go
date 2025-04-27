@@ -10,3 +10,6 @@ import (
 func createLoggingClient(ctx context.Context, projectID string) (*logging.Client, error) {
 	return logging.NewClient(ctx, projectID)
 }
+
+// loggingClientFactory allows injection/mocking in tests.
+var loggingClientFactory = createLoggingClient

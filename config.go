@@ -1,7 +1,6 @@
 package main
 
 import (
-	"flag"
 	"fmt"
 	"os"
 )
@@ -10,14 +9,6 @@ type config struct {
 	port       string
 	bucketName string
 	projectID  string
-}
-
-// parseFlags parses command line flags and returns a config with just the flags set.
-func parseFlags() *config {
-	var cfg config
-	flag.StringVar(&cfg.port, "port", "8080", "Server port")
-	flag.Parse()
-	return &cfg
 }
 
 // validateConfig checks if the config is valid and returns an error if not.
@@ -31,7 +22,7 @@ func validateConfig(cfg *config) error {
 	return nil
 }
 
-// loadConfig loads configuration from environment variables.
+// loadConfig loads configuration from environment variables and the provided base config.
 func loadConfig(base *config) (*config, error) {
 	cfg := &config{
 		port: "8080", // default value

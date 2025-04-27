@@ -255,8 +255,11 @@ func handleSignals() chan struct{} {
 	return shutdown
 }
 
-// runServer runs the HTTP server until it is shut down.
-func runServer(ctx context.Context, srv *http.Server) error {
+// runServer is a package-level variable to allow mocking in tests.
+var runServer = runServerImpl
+
+// runServerImpl runs the HTTP server until it is shut down.
+func runServerImpl(ctx context.Context, srv *http.Server) error {
 	serverErrors := make(chan error, 1)
 	go func() {
 		log.Printf("Server started on port %s", srv.Addr)

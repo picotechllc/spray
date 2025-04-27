@@ -10,6 +10,7 @@ import (
 
 	"cloud.google.com/go/logging"
 	"cloud.google.com/go/storage"
+	"github.com/stretchr/testify/assert"
 	"google.golang.org/api/option"
 )
 
@@ -328,6 +329,40 @@ func TestNewGCSServer(t *testing.T) {
 			if server.logger == nil {
 				t.Error("Expected logger to be non-nil")
 			}
+		})
+	}
+}
+
+func TestHealthCheckHandlers(t *testing.T) {
+	tests := []struct {
+		name     string
+		handler  http.HandlerFunc
+		wantCode int
+		wantBody string
+	}{
+		{
+			name:     "readyz handler",
+			handler:  readyzHandler,
+			wantCode: http.StatusOK,
+			wantBody: "ok",
+		},
+		{
+			name:     "livez handler",
+			handler:  livezHandler,
+			wantCode: http.StatusOK,
+			wantBody: "ok",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest("GET", "/", nil)
+			rr := httptest.NewRecorder()
+
+			tt.handler(rr, req)
+
+			assert.Equal(t, tt.wantCode, rr.Code)
+			assert.Equal(t, tt.wantBody, rr.Body.String())
 		})
 	}
 }

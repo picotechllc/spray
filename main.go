@@ -3,29 +3,46 @@ package main
 import (
 	"context"
 	"log"
+
+	"github.com/spf13/cobra"
 )
 
 func main() {
-	flagCfg := parseFlags()
-	cfg, err := loadConfig(flagCfg)
-	if err != nil {
-		log.Fatal(err)
+	var port string
+
+	rootCmd := &cobra.Command{
+		Use:   "spray",
+		Short: "Spray is a GCS static file server.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := context.Background()
+			return RunApp(ctx, port)
+		},
 	}
 
-	ctx := context.Background()
+	rootCmd.Flags().StringVar(&port, "port", "8080", "Server port")
 
-	logClient, err := createLoggingClient(ctx, cfg.projectID)
-	if err != nil {
+	if err := rootCmd.Execute(); err != nil {
 		log.Fatal(err)
+	}
+}
+
+// RunApp contains the main orchestration logic and is testable.
+func RunApp(ctx context.Context, port string) error {
+	cfg, err := loadConfig(&config{port: port})
+	if err != nil {
+		return err
+	}
+
+	logClient, err := loggingClientFactory(ctx, cfg.projectID)
+	if err != nil {
+		return err
 	}
 	defer logClient.Close()
 
 	srv, err := DefaultServerSetup(ctx, cfg, logClient)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
-	if err := runServer(ctx, srv); err != nil {
-		log.Fatal(err)
-	}
+	return runServer(ctx, srv)
 }
