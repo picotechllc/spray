@@ -250,6 +250,12 @@ func TestCleanRequestPath(t *testing.T) {
 			path:         "////",
 			expectedPath: "index.html",
 		},
+		{
+			name:          "Invalid percent encoding",
+			path:          "/%ZZ",
+			expectError:   true,
+			errorContains: "invalid URL escape",
+		},
 	}
 
 	for _, tt := range tests {
