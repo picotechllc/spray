@@ -28,14 +28,14 @@ jobs:
         run: go test -v -race -coverprofile=coverage.txt -covermode=atomic ./...
 
       - name: Convert coverage to lcov
-        if: always()
+        if: steps.test.outcome == 'success'
         uses: jandelgado/gcov2lcov-action@v1.0.9
         with:
           infile: coverage.txt
           outfile: coverage.lcov
 
       - name: Send coverage to Coveralls
-        if: always()
+        if: steps.test.outcome == 'success'
         uses: coverallsapp/github-action@v2
         with:
           file: coverage.lcov
