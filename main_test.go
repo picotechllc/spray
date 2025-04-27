@@ -95,17 +95,33 @@ func TestRun(t *testing.T) {
 func TestRunApp_Errors(t *testing.T) {
 	ctx := context.Background()
 
+	// --- loadConfig error: missing BUCKET_NAME ---
+	os.Unsetenv("BUCKET_NAME")
+	os.Setenv("GOOGLE_PROJECT_ID", "test-project")
+	err := RunApp(ctx, "8080")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "BUCKET_NAME environment variable is required")
+
+	// --- loadConfig error: missing GOOGLE_PROJECT_ID ---
+	os.Setenv("BUCKET_NAME", "test-bucket")
+	os.Unsetenv("GOOGLE_PROJECT_ID")
+	err = RunApp(ctx, "8080")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "GOOGLE_PROJECT_ID environment variable is required")
+
+	// --- loggingClientFactory error ---
 	os.Setenv("BUCKET_NAME", "test-bucket")
 	os.Setenv("GOOGLE_PROJECT_ID", "test-project")
-	defer os.Unsetenv("BUCKET_NAME")
-	defer os.Unsetenv("GOOGLE_PROJECT_ID")
-
-	// Mock loggingClientFactory to avoid real GCP credential lookup
 	origLoggingClientFactory := loggingClientFactory
 	loggingClientFactory = func(ctx context.Context, projectID string) (*logging.Client, error) {
-		return logging.NewClient(ctx, projectID, option.WithoutAuthentication())
+		return nil, assert.AnError
 	}
 	t.Cleanup(func() { loggingClientFactory = origLoggingClientFactory })
+	err = RunApp(ctx, "8080")
+	assert.ErrorIs(t, err, assert.AnError)
+
+	// Restore loggingClientFactory for the rest of the test
+	loggingClientFactory = origLoggingClientFactory
 
 	// Save originals
 	origDefaultServerSetup := DefaultServerSetup
@@ -120,7 +136,7 @@ func TestRunApp_Errors(t *testing.T) {
 	DefaultServerSetup = func(ctx context.Context, cfg *config, logClient *logging.Client) (*http.Server, error) {
 		return nil, assert.AnError
 	}
-	err := RunApp(ctx, "8080")
+	err = RunApp(ctx, "8080")
 	assert.ErrorIs(t, err, assert.AnError)
 
 	// --- Server run error ---
