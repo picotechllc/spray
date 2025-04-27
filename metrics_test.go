@@ -1,6 +1,7 @@
 package main
 
 import (
+	"sync"
 	"testing"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -194,4 +195,107 @@ func TestMetricsBehavior(t *testing.T) {
 		count := testutil.CollectAndCount(gcsLatency)
 		assert.Equal(t, 1, count)
 	})
+}
+
+func TestConcurrentMetrics(t *testing.T) {
+	const (
+		numGoroutines = 10
+		numIterations = 100
+		testBucket    = "test-bucket"
+	)
+
+	tests := []struct {
+		name     string
+		metric   func()
+		expected float64
+	}{
+		{
+			name: "requestsTotal",
+			metric: func() {
+				requestsTotal.WithLabelValues(testBucket, "/test", "GET", "200").Inc()
+			},
+			expected: float64(numGoroutines * numIterations),
+		},
+		{
+			name: "activeRequests",
+			metric: func() {
+				activeRequests.WithLabelValues(testBucket).Inc()
+				defer activeRequests.WithLabelValues(testBucket).Dec()
+			},
+			expected: 0, // Should end at 0 since we decrement after incrementing
+		},
+		{
+			name: "bytesTransferred",
+			metric: func() {
+				bytesTransferred.WithLabelValues(testBucket, "/test", "GET", "download").Add(100)
+			},
+			expected: float64(numGoroutines * numIterations * 100),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Reset metrics before test
+			prometheus.DefaultRegisterer.Unregister(requestsTotal)
+			prometheus.DefaultRegisterer.Unregister(activeRequests)
+			prometheus.DefaultRegisterer.Unregister(bytesTransferred)
+
+			// Re-register metrics with fresh instances
+			requestsTotal = promauto.NewCounterVec(
+				prometheus.CounterOpts{
+					Name: "gcs_server_requests_total",
+					Help: "Total number of requests handled by the GCS server",
+				},
+				[]string{"bucket_name", "path", "method", "status"},
+			)
+
+			activeRequests = promauto.NewGaugeVec(
+				prometheus.GaugeOpts{
+					Name: "gcs_server_active_requests",
+					Help: "Number of currently active requests",
+				},
+				[]string{"bucket_name"},
+			)
+
+			bytesTransferred = promauto.NewCounterVec(
+				prometheus.CounterOpts{
+					Name: "gcs_server_bytes_transferred_total",
+					Help: "Total number of bytes transferred",
+				},
+				[]string{"bucket_name", "path", "method", "direction"},
+			)
+
+			// Create a wait group to synchronize goroutines
+			var wg sync.WaitGroup
+			wg.Add(numGoroutines)
+
+			// Start concurrent goroutines
+			for i := 0; i < numGoroutines; i++ {
+				go func() {
+					defer wg.Done()
+					for j := 0; j < numIterations; j++ {
+						tt.metric()
+					}
+				}()
+			}
+
+			// Wait for all goroutines to complete
+			wg.Wait()
+
+			// Verify the final metric value
+			var value float64
+			switch tt.name {
+			case "requestsTotal":
+				value = testutil.ToFloat64(requestsTotal.WithLabelValues(testBucket, "/test", "GET", "200"))
+			case "activeRequests":
+				value = testutil.ToFloat64(activeRequests.WithLabelValues(testBucket))
+			case "bytesTransferred":
+				value = testutil.ToFloat64(bytesTransferred.WithLabelValues(testBucket, "/test", "GET", "download"))
+			}
+
+			if value != tt.expected {
+				t.Errorf("Expected metric value %v, got %v", tt.expected, value)
+			}
+		})
+	}
 }
