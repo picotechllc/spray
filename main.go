@@ -20,7 +20,7 @@ func main() {
 	}
 	defer logClient.Close()
 
-	srv, err := createServer(ctx, cfg, logClient)
+	srv, err := DefaultServerSetup(ctx, cfg, logClient)
 	if err != nil {
 		log.Fatal(err)
 	}
