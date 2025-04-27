@@ -34,10 +34,13 @@ jobs:
 
       - name: Run tests with coverage
         run: |
-          go test -race -coverprofile=coverage.txt -covermode=atomic ./...
+          go test -race -coverprofile=coverage.out -covermode=atomic ./...
 
       - name: Convert coverage to lcov
         uses: jandelgado/gcov2lcov-action@v1
+        with:
+          infile: coverage.out
+          outfile: coverage.lcov
 
       - name: Upload coverage to Coveralls
         uses: coverallsapp/github-action@v2
