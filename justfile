@@ -50,4 +50,4 @@ update:
     go mod tidy
 
 # Run all pre-commit checks
-check: fmt lint test 
+check: fmt lint test
