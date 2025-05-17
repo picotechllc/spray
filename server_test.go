@@ -463,3 +463,92 @@ func TestServeHTTP_StorageError(t *testing.T) {
 		t.Errorf("Expected error message in response body, got %q", w.Body.String())
 	}
 }
+
+// TestGCSObjectStoreGetObject tests the concrete implementation of GCSObjectStore.GetObject
+func TestGCSObjectStoreGetObject(t *testing.T) {
+	// Create a context for testing
+	ctx := context.Background()
+
+	// Create test data
+	expectedData := []byte("test content")
+	testObj := &mockObject{
+		data:        expectedData,
+		contentType: "text/plain",
+	}
+
+	// Happy path - test successful retrieval
+	t.Run("success case", func(t *testing.T) {
+		// Create mock store with one object
+		mockStore := &mockObjectStore{
+			objects: map[string]mockObject{
+				"test.txt": *testObj,
+			},
+		}
+
+		// Create test server with the mock store
+		server := &gcsServer{
+			store:      mockStore,
+			bucketName: "test-bucket",
+		}
+
+		// Call the method under test (through the server's store)
+		reader, attrs, err := server.store.GetObject(ctx, "test.txt")
+
+		// Verify results
+		assert.NoError(t, err)
+		assert.NotNil(t, reader)
+		assert.NotNil(t, attrs)
+
+		// Read content from reader
+		content, err := io.ReadAll(reader)
+		assert.NoError(t, err)
+		assert.Equal(t, string(expectedData), string(content))
+
+		// Close reader
+		reader.Close()
+	})
+
+	// Test not found case
+	t.Run("not found case", func(t *testing.T) {
+		// Create empty mock store
+		mockStore := &mockObjectStore{
+			objects: make(map[string]mockObject),
+		}
+
+		// Create test server with the mock store
+		server := &gcsServer{
+			store:      mockStore,
+			bucketName: "test-bucket",
+		}
+
+		// Call the method under test
+		reader, attrs, err := server.store.GetObject(ctx, "nonexistent.txt")
+
+		// Verify results
+		assert.Error(t, err)
+		assert.Equal(t, storage.ErrObjectNotExist, err)
+		assert.Nil(t, reader)
+		assert.Nil(t, attrs)
+	})
+
+	// Custom error case
+	t.Run("error case", func(t *testing.T) {
+		// Create mock store that always returns an error
+		errorStore := &errorObjectStore{}
+
+		// Create test server with the error store
+		server := &gcsServer{
+			store:      errorStore,
+			bucketName: "test-bucket",
+		}
+
+		// Call the method under test
+		reader, attrs, err := server.store.GetObject(ctx, "test.txt")
+
+		// Verify results
+		assert.Error(t, err)
+		assert.Equal(t, assert.AnError, err)
+		assert.Nil(t, reader)
+		assert.Nil(t, attrs)
+	})
+}
