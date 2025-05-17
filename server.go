@@ -28,6 +28,7 @@ type GCSObjectStore struct {
 	bucket *storage.BucketHandle
 }
 
+// GetObject retrieves an object from the GCS bucket
 func (s *GCSObjectStore) GetObject(ctx context.Context, path string) (io.ReadCloser, *storage.ObjectAttrs, error) {
 	obj := s.bucket.Object(path)
 	reader, err := obj.NewReader(ctx)
