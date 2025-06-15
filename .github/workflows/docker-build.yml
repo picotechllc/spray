@@ -4,18 +4,39 @@ on:
   push:
     branches:
       - main
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      build_arm64:
+        description: 'Build ARM64 image'
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   tag:
     runs-on: ubuntu-latest
     outputs:
       new_version: ${{ steps.tag_version.outputs.new_version }}
+      is_tag: ${{ steps.check_tag.outputs.is_tag }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Check if this is a tag push
+        id: check_tag
+        run: |
+          if [[ $GITHUB_REF == refs/tags/* ]]; then
+            echo "is_tag=true" >> $GITHUB_OUTPUT
+            echo "new_version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          else
+            echo "is_tag=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Bump version and push tag
         id: tag_version
+        if: steps.check_tag.outputs.is_tag == 'false'
         run: |
           git config --global user.email "actions@github.com"
           git config --global user.name "GitHub Actions"
@@ -31,7 +52,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  build:
+  build-amd64:
     needs: tag
     runs-on: ubuntu-latest
     steps:
@@ -40,11 +61,6 @@ jobs:
 
       - name: Fetch tags
         run: git fetch --tags
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: all
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -55,9 +71,10 @@ jobs:
           path: |
             ~/.cache/go-build
             /go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          key: ${{ runner.os }}-go-amd64-${{ hashFiles('**/go.sum') }}
           restore-keys: |
-                ${{ runner.os }}-go-
+            ${{ runner.os }}-go-amd64-
+            ${{ runner.os }}-go-
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
@@ -66,11 +83,165 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push Docker image
+      - name: Build and push AMD64 image
         uses: docker/build-push-action@v6
         with:
           context: .
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64
           push: true
-          tags: ghcr.io/${{ github.repository_owner }}/spray:${{ needs.tag.outputs.new_version }}
+          tags: ghcr.io/${{ github.repository_owner }}/spray:${{ needs.tag.outputs.new_version }}-amd64
+          cache-from: type=gha,scope=amd64
+          cache-to: type=gha,mode=max,scope=amd64
+
+  build-arm64:
+    needs: tag
+    runs-on: ubuntu-latest
+    # Only build ARM64 if:
+    # 1. Manually triggered with build_arm64=true, OR
+    # 2. This is a tag push (long-lived version)
+    if: github.event.inputs.build_arm64 == 'true' || needs.tag.outputs.is_tag == 'true'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Fetch tags
+        run: git fetch --tags
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Cache Go modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            /go/pkg/mod
+          key: ${{ runner.os }}-go-arm64-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-arm64-
+            ${{ runner.os }}-go-
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push ARM64 image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/arm64
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/spray:${{ needs.tag.outputs.new_version }}-arm64
+          cache-from: type=gha,scope=arm64
+          cache-to: type=gha,mode=max,scope=arm64
+
+  create-manifest:
+    needs: [tag, build-amd64, build-arm64]
+    runs-on: ubuntu-latest
+    # Only create multi-platform manifest if ARM64 was built
+    if: always() && needs.build-amd64.result == 'success' && (needs.build-arm64.result == 'success' || needs.build-arm64.result == 'skipped')
+    steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create and push multi-platform manifest
+        if: needs.build-arm64.result == 'success'
+        run: |
+          docker buildx imagetools create -t ghcr.io/${{ github.repository_owner }}/spray:${{ needs.tag.outputs.new_version }} \
+            ghcr.io/${{ github.repository_owner }}/spray:${{ needs.tag.outputs.new_version }}-amd64 \
+            ghcr.io/${{ github.repository_owner }}/spray:${{ needs.tag.outputs.new_version }}-arm64
+
+      - name: Create and push latest manifest
+        if: needs.build-arm64.result == 'success'
+        run: |
+          docker buildx imagetools create -t ghcr.io/${{ github.repository_owner }}/spray:latest \
+            ghcr.io/${{ github.repository_owner }}/spray:${{ needs.tag.outputs.new_version }}-amd64 \
+            ghcr.io/${{ github.repository_owner }}/spray:${{ needs.tag.outputs.new_version }}-arm64
+
+      - name: Create AMD64-only manifest (when ARM64 skipped)
+        if: needs.build-arm64.result == 'skipped'
+        run: |
+          docker buildx imagetools create -t ghcr.io/${{ github.repository_owner }}/spray:${{ needs.tag.outputs.new_version }} \
+            ghcr.io/${{ github.repository_owner }}/spray:${{ needs.tag.outputs.new_version }}-amd64
+
+      - name: Create AMD64-only latest manifest (when ARM64 skipped)
+        if: needs.build-arm64.result == 'skipped'
+        run: |
+          docker buildx imagetools create -t ghcr.io/${{ github.repository_owner }}/spray:latest \
+            ghcr.io/${{ github.repository_owner }}/spray:${{ needs.tag.outputs.new_version }}-amd64
+
+  create-release:
+    needs: [tag, build-amd64, build-arm64, create-manifest]
+    runs-on: ubuntu-latest
+    # Only create release for tag pushes
+    if: needs.tag.outputs.is_tag == 'true' && needs.create-manifest.result == 'success'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate release notes
+        id: release_notes
+        run: |
+          # Get the previous tag
+          PREV_TAG=$(git tag --sort=-v:refname | head -n 2 | tail -n 1)
+          CURRENT_TAG=${{ needs.tag.outputs.new_version }}
+          
+          # Generate changelog
+          echo "## What's Changed" > release_notes.md
+          echo "" >> release_notes.md
+          
+          if [ ! -z "$PREV_TAG" ] && [ "$PREV_TAG" != "$CURRENT_TAG" ]; then
+            echo "### Commits since $PREV_TAG:" >> release_notes.md
+            git log --pretty=format:"- %s (%h)" ${PREV_TAG}..HEAD >> release_notes.md
+          else
+            echo "### Commits in this version:" >> release_notes.md  
+            git log --pretty=format:"- %s (%h)" >> release_notes.md
+          fi
+          
+          echo "" >> release_notes.md
+          echo "## Docker Images" >> release_notes.md
+          echo "" >> release_notes.md
+          echo "### AMD64" >> release_notes.md
+          echo "\`\`\`bash" >> release_notes.md
+          echo "docker pull ghcr.io/${{ github.repository_owner }}/spray:$CURRENT_TAG" >> release_notes.md
+          echo "\`\`\`" >> release_notes.md
+          
+          # Check if ARM64 was built  
+          if [ "${{ needs.build-arm64.result }}" == "success" ]; then
+            echo "" >> release_notes.md
+            echo "### Multi-Platform (AMD64 + ARM64)" >> release_notes.md
+            echo "\`\`\`bash" >> release_notes.md
+            echo "docker pull ghcr.io/${{ github.repository_owner }}/spray:$CURRENT_TAG" >> release_notes.md
+            echo "\`\`\`" >> release_notes.md
+            echo "" >> release_notes.md
+            echo "This release includes both AMD64 and ARM64 architectures." >> release_notes.md
+          else
+            echo "" >> release_notes.md
+            echo "_This release only includes AMD64 architecture._" >> release_notes.md
+          fi
+
+      - name: Create GitHub Release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ needs.tag.outputs.new_version }}
+          release_name: Release ${{ needs.tag.outputs.new_version }}
+          body_path: release_notes.md
+          draft: false
+          prerelease: false
 
