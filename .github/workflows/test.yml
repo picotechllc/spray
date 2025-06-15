@@ -89,6 +89,7 @@ jobs:
           access_token_lifetime: 3600s
           access_token_scopes: https://www.googleapis.com/auth/cloud-platform
           id_token_include_email: false
+          audience: https://github.com/picotechllc/spray
 
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
