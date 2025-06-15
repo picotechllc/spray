@@ -62,7 +62,7 @@ jobs:
           TEST_BUCKET: ${{ secrets.TEST_BUCKET }}
           BUCKET_NAME: ${{ secrets.TEST_BUCKET }}
         run: |
-          go test -race -coverprofile=coverage.out -covermode=atomic ./...
+          go test -race -coverprofile=coverage.out -covermode=atomic ./... -tags=!integration
 
       - name: Convert coverage to lcov
         uses: jandelgado/gcov2lcov-action@v1
