@@ -12,8 +12,8 @@ import (
 // ServerSetup is a function type that creates a new server
 type ServerSetup func(context.Context, *config, *logging.Client) (*http.Server, error)
 
-// DefaultServerSetup creates a new server with default configuration
-func DefaultServerSetup(ctx context.Context, cfg *config, logClient *logging.Client) (*http.Server, error) {
+// defaultServerSetup creates a new server with default configuration
+func defaultServerSetup(ctx context.Context, cfg *config, logClient *logging.Client) (*http.Server, error) {
 	logger := logClient.Logger("gcs-server")
 
 	server, err := newGCSServer(ctx, cfg.bucketName, logger, nil, cfg.redirects)
@@ -32,3 +32,6 @@ func DefaultServerSetup(ctx context.Context, cfg *config, logClient *logging.Cli
 		Handler: mux,
 	}, nil
 }
+
+// DefaultServerSetup is the default server setup implementation
+var DefaultServerSetup ServerSetup = defaultServerSetup

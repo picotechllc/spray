@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	"testing"
 
@@ -86,7 +87,7 @@ func TestLoadConfig(t *testing.T) {
 				base = &config{port: tt.basePort}
 			}
 
-			cfg, err := loadConfig(base)
+			cfg, err := loadConfig(context.Background(), base, nil)
 			if tt.wantErr {
 				assert.Error(t, err)
 				if tt.errMsg != "" {
