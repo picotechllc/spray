@@ -202,7 +202,84 @@ func (s *gcsServer) sendUserFriendlyError(w http.ResponseWriter, r *http.Request
 	errorTotal.WithLabelValues(s.bucketName, path, errorType).Inc()
 	requestsTotal.WithLabelValues(s.bucketName, path, r.Method, fmt.Sprintf("%d", statusCode)).Inc()
 
-	// Send user-friendly response
+	// Determine response format based on Accept header
+	acceptHeader := r.Header.Get("Accept")
+	wantsJSON := strings.Contains(acceptHeader, "application/json") ||
+		strings.Contains(acceptHeader, "*/*") && !strings.Contains(acceptHeader, "text/html")
+
+	// If the request explicitly accepts HTML or doesn't specify (browser behavior)
+	if strings.Contains(acceptHeader, "text/html") || (!wantsJSON && acceptHeader != "") {
+		// Send HTML error page for browsers
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(statusCode)
+
+		htmlResponse := fmt.Sprintf(`<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Error %d - %s</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            margin: 0;
+            padding: 2rem;
+            background-color: #f5f5f5;
+            color: #333;
+        }
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            background: white;
+            padding: 2rem;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #d73a49;
+            margin-bottom: 1rem;
+        }
+        .error-code {
+            font-size: 3rem;
+            font-weight: bold;
+            color: #d73a49;
+            margin-bottom: 0.5rem;
+        }
+        .message {
+            font-size: 1.1rem;
+            margin-bottom: 1.5rem;
+        }
+        .help {
+            background: #f8f9fa;
+            padding: 1rem;
+            border-radius: 4px;
+            border-left: 4px solid #0366d6;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="error-code">%d</div>
+        <h1>%s</h1>
+        <div class="message">%s</div>
+        <div class="help">
+            <strong>What can you do?</strong>
+            <ul>
+                <li>Check the URL for typos</li>
+                <li>Try refreshing the page</li>
+                <li>Go back to the <a href="/">homepage</a></li>
+            </ul>
+        </div>
+    </div>
+</body>
+</html>`, statusCode, http.StatusText(statusCode), statusCode, http.StatusText(statusCode), userMessage)
+
+		w.Write([]byte(htmlResponse))
+		return
+	}
+
+	// Send JSON response for API clients
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
 
