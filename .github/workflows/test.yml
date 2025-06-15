@@ -97,6 +97,8 @@ jobs:
           version: '>= 416.0.0'
 
       - name: Run integration tests
+        env:
+          TEST_BUCKET: ${{ secrets.TEST_BUCKET }}
         run: |
           go test -v -tags=integration ./...
           echo "::notice::Integration tests completed" 
