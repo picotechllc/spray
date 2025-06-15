@@ -108,13 +108,4 @@ var (
 		},
 		[]string{"bucket_name", "error_type"}, // error_type: parse_error, invalid_url, etc.
 	)
-
-	// redirectDestinationHealth tracks the health of redirect destinations
-	redirectDestinationHealth = promauto.NewGaugeVec(
-		prometheus.GaugeOpts{
-			Name: "gcs_server_redirect_destination_health",
-			Help: "Health status of redirect destinations (1 = healthy, 0 = unhealthy)",
-		},
-		[]string{"bucket_name", "destination"},
-	)
 )
