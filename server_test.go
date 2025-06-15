@@ -39,18 +39,17 @@ func (r *mockReader) Close() error {
 	return nil
 }
 
+// mockObjectStore implements ObjectStore for testing
 type mockObjectStore struct {
 	objects map[string]mockObject
 }
 
+// GetObject returns a mock object
 func (s *mockObjectStore) GetObject(ctx context.Context, path string) (io.ReadCloser, *storage.ObjectAttrs, error) {
-	obj, exists := s.objects[path]
-	if !exists {
-		return nil, nil, storage.ErrObjectNotExist
+	if obj, ok := s.objects[path]; ok {
+		return io.NopCloser(strings.NewReader(string(obj.data))), &storage.ObjectAttrs{}, nil
 	}
-	return &mockReader{data: obj.data}, &storage.ObjectAttrs{
-		ContentType: obj.contentType,
-	}, nil
+	return nil, nil, storage.ErrObjectNotExist
 }
 
 // Mock ObjectStore that always returns a custom error for testing ServeHTTP error path
@@ -96,6 +95,9 @@ func newMockStorageClient() *mockStorageClient {
 
 // Bucket returns a mock bucket
 func (c *mockStorageClient) Bucket(name string) *storage.BucketHandle {
+	if name == "" {
+		return nil
+	}
 	return &storage.BucketHandle{}
 }
 
@@ -123,10 +125,13 @@ func createMockServer(t *testing.T, objects map[string]mockObject, redirects map
 		objects: objects,
 	}
 
+	// Create a mock logger that won't panic
+	logger := &logging.Logger{}
+
 	return &gcsServer{
 		store:      store,
 		bucketName: "test-bucket",
-		logger:     &logging.Logger{},
+		logger:     logger,
 		redirects:  redirects,
 	}
 }

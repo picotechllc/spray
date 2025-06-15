@@ -82,6 +82,24 @@ func TestRun(t *testing.T) {
 func TestRunApp_Errors(t *testing.T) {
 	ctx := context.Background()
 
+	// Save originals
+	origLoggingClientFactory := loggingClientFactory
+	origDefaultServerSetup := DefaultServerSetup
+	origRunServer := runServer
+	origStorageClientFactory := storageClientFactory
+
+	// Mock storage client factory to avoid Google Cloud credentials issues
+	storageClientFactory = func(ctx context.Context) (StorageClient, error) {
+		return newMockStorageClient(), nil
+	}
+
+	t.Cleanup(func() {
+		loggingClientFactory = origLoggingClientFactory
+		DefaultServerSetup = origDefaultServerSetup
+		runServer = origRunServer
+		storageClientFactory = origStorageClientFactory
+	})
+
 	// --- loadConfig error: missing BUCKET_NAME ---
 	os.Unsetenv("BUCKET_NAME")
 	os.Setenv("GOOGLE_PROJECT_ID", "test-project")
@@ -99,27 +117,14 @@ func TestRunApp_Errors(t *testing.T) {
 	// --- loggingClientFactory error ---
 	os.Setenv("BUCKET_NAME", "test-bucket")
 	os.Setenv("GOOGLE_PROJECT_ID", "test-project")
-	origLoggingClientFactory := loggingClientFactory
 	loggingClientFactory = func(ctx context.Context, projectID string) (LoggingClient, error) {
 		return nil, assert.AnError
 	}
-	t.Cleanup(func() { loggingClientFactory = origLoggingClientFactory })
 	err = RunApp(ctx, "8080")
 	assert.ErrorIs(t, err, assert.AnError)
 
 	// Restore loggingClientFactory for the rest of the test
 	loggingClientFactory = origLoggingClientFactory
-
-	// Save originals
-	origDefaultServerSetup := DefaultServerSetup
-	origRunServer := runServer
-	origStorageClientFactory := storageClientFactory
-
-	t.Cleanup(func() {
-		DefaultServerSetup = origDefaultServerSetup
-		runServer = origRunServer
-		storageClientFactory = origStorageClientFactory
-	})
 
 	// --- Server setup error ---
 	DefaultServerSetup = func(ctx context.Context, cfg *config, logClient LoggingClient) (*http.Server, error) {
@@ -137,11 +142,6 @@ func TestRunApp_Errors(t *testing.T) {
 	// Use a valid config and logging client
 	DefaultServerSetup = func(ctx context.Context, c *config, l LoggingClient) (*http.Server, error) {
 		return &http.Server{}, nil
-	}
-
-	// Mock storage client factory to avoid Google Cloud credentials issues
-	storageClientFactory = func(ctx context.Context) (StorageClient, error) {
-		return newMockStorageClient(), nil
 	}
 
 	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)

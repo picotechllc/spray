@@ -176,8 +176,8 @@ func TestSetupServer(t *testing.T) {
 				store:      newMockStorageClient(),
 			},
 			setupServer: func(ctx context.Context, cfg *config, logClient LoggingClient) (*http.Server, error) {
-				logger := logClient.Logger("test-logger")
-
+				// Create a mock logger that won't panic
+				logger := &logging.Logger{}
 				server, err := newGCSServer(ctx, cfg.bucketName, logger, cfg.store, cfg.redirects)
 				if err != nil {
 					return nil, err
