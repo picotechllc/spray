@@ -23,6 +23,15 @@ func TestGCSIntegration(t *testing.T) {
 
 	ctx := context.Background()
 
+	// Set up authentication for CI environment
+	if os.Getenv("GOOGLE_APPLICATION_CREDENTIALS") == "" {
+		if ghaCredsPath := os.Getenv("GOOGLE_GHA_CREDS_PATH"); ghaCredsPath != "" {
+			os.Setenv("GOOGLE_APPLICATION_CREDENTIALS", ghaCredsPath)
+		} else if cloudsdk := os.Getenv("CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE"); cloudsdk != "" {
+			os.Setenv("GOOGLE_APPLICATION_CREDENTIALS", cloudsdk)
+		}
+	}
+
 	// Create a real GCS client
 	client, err := storage.NewClient(ctx)
 	require.NoError(t, err, "Failed to create GCS client")
