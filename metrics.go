@@ -80,4 +80,32 @@ var (
 		},
 		[]string{"bucket_name", "operation"}, // operation: get_object, get_attrs
 	)
+
+	// redirectHits tracks the number of redirects served
+	redirectHits = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "gcs_server_redirects_total",
+			Help: "Total number of redirects served",
+		},
+		[]string{"bucket_name", "path", "destination"},
+	)
+
+	// redirectLatency tracks the time taken to process redirects
+	redirectLatency = promauto.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "gcs_server_redirect_duration_seconds",
+			Help:    "Duration of redirect processing in seconds",
+			Buckets: prometheus.DefBuckets,
+		},
+		[]string{"bucket_name", "path"},
+	)
+
+	// redirectConfigErrors tracks errors in redirect configuration
+	redirectConfigErrors = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "gcs_server_redirect_config_errors_total",
+			Help: "Total number of redirect configuration errors",
+		},
+		[]string{"bucket_name", "error_type"}, // error_type: parse_error, invalid_url, etc.
+	)
 )

@@ -18,11 +18,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-// ObjectStore defines the interface for storage operations
-type ObjectStore interface {
-	GetObject(ctx context.Context, path string) (io.ReadCloser, *storage.ObjectAttrs, error)
-}
-
 // GCSObjectStore implements ObjectStore using Google Cloud Storage
 type GCSObjectStore struct {
 	bucket *storage.BucketHandle
@@ -48,34 +43,21 @@ func (s *GCSObjectStore) GetObject(ctx context.Context, path string) (io.ReadClo
 type gcsServer struct {
 	store      ObjectStore
 	bucketName string
-	logger     *logging.Logger
+	logger     Logger
+	redirects  map[string]string
 }
 
-// newGCSServer creates a new gcsServer with the provided storage client and logger.
-func newGCSServer(ctx context.Context, bucketName string, logger *logging.Logger, storageClient *storage.Client) (*gcsServer, error) {
-	if storageClient == nil {
-		var err error
-		storageClient, err = storage.NewClient(ctx)
-		if err != nil {
-			logger.Log(logging.Entry{
-				Severity: logging.Error,
-				Payload: map[string]any{
-					"error":     err.Error(),
-					"operation": "create_storage_client",
-				},
-			})
-			return nil, fmt.Errorf("failed to create client: %v", err)
-		}
-	}
-
-	store := &GCSObjectStore{
-		bucket: storageClient.Bucket(bucketName),
+// newGCSServer creates a new GCS server
+func newGCSServer(ctx context.Context, bucketName string, logger Logger, store ObjectStore, redirects map[string]string) (*gcsServer, error) {
+	if store == nil {
+		return nil, fmt.Errorf("store cannot be nil")
 	}
 
 	return &gcsServer{
 		store:      store,
 		bucketName: bucketName,
 		logger:     logger,
+		redirects:  redirects,
 	}, nil
 }
 
@@ -147,6 +129,24 @@ func (s *gcsServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		errorTotal.WithLabelValues(s.bucketName, r.URL.Path, "invalid_path").Inc()
 		requestsTotal.WithLabelValues(s.bucketName, r.URL.Path, r.Method, "400").Inc()
 		http.Error(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
+
+	// Check for redirects
+	if destination, exists := s.redirects[cleanPath]; exists {
+		redirectStart := time.Now()
+		s.logger.Log(logging.Entry{
+			Severity: logging.Info,
+			Payload: map[string]any{
+				"path":        cleanPath,
+				"destination": destination,
+				"operation":   "redirect",
+			},
+		})
+		requestsTotal.WithLabelValues(s.bucketName, cleanPath, r.Method, "302").Inc()
+		redirectHits.WithLabelValues(s.bucketName, cleanPath, destination).Inc()
+		redirectLatency.WithLabelValues(s.bucketName, cleanPath).Observe(time.Since(redirectStart).Seconds())
+		http.Redirect(w, r, destination, http.StatusFound)
 		return
 	}
 
@@ -226,10 +226,10 @@ func livezHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // createServer creates a new HTTP server with the given configuration.
-func createServer(ctx context.Context, cfg *config, logClient *logging.Client) (*http.Server, error) {
+func createServer(ctx context.Context, cfg *config, logClient LoggingClient) (*http.Server, error) {
 	logger := logClient.Logger("gcs-server")
 
-	server, err := newGCSServer(ctx, cfg.bucketName, logger, nil)
+	server, err := newGCSServer(ctx, cfg.bucketName, logger, nil, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create GCS server: %v", err)
 	}
@@ -268,26 +268,24 @@ var runServer = runServerImpl
 
 // runServerImpl runs the HTTP server until it is shut down.
 func runServerImpl(ctx context.Context, srv *http.Server) error {
-	serverErrors := make(chan error, 1)
+	// Start the server in a goroutine
 	go func() {
-		log.Printf("Server started on port %s", srv.Addr)
-		serverErrors <- srv.ListenAndServe()
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Printf("Error running server: %v", err)
+		}
 	}()
 
+	// Wait for shutdown signal
 	shutdown := handleSignals()
+	<-shutdown
 
-	select {
-	case err := <-serverErrors:
-		return fmt.Errorf("server error: %v", err)
-	case <-shutdown:
-		log.Println("Starting shutdown...")
+	// Create a new context with timeout for graceful shutdown
+	shutdownCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
 
-		ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		defer cancel()
-
-		if err := srv.Shutdown(ctx); err != nil {
-			return fmt.Errorf("graceful shutdown failed: %v", err)
-		}
+	// Attempt graceful shutdown
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		return fmt.Errorf("graceful shutdown failed: %v", err)
 	}
 
 	return nil

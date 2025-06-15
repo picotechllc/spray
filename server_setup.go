@@ -2,13 +2,34 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 
-	"cloud.google.com/go/logging"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-// ServerSetup is a function type for setting up the HTTP server
-type ServerSetup func(context.Context, *config, *logging.Client) (*http.Server, error)
+// ServerSetup is a function type that sets up the server
+type ServerSetup = func(context.Context, *config, LoggingClient) (*http.Server, error)
 
-// DefaultServerSetup is the default server setup implementation
-var DefaultServerSetup ServerSetup = createServer
+// DefaultServerSetup is the default server setup function
+var DefaultServerSetup ServerSetup = func(ctx context.Context, cfg *config, logClient LoggingClient) (*http.Server, error) {
+	logger := logClient.Logger("gcs-server")
+
+	// Create a new GCS server
+	server, err := newGCSServer(ctx, cfg.bucketName, logger, cfg.store, cfg.redirects)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create GCS server: %v", err)
+	}
+
+	// Set up HTTP handlers
+	mux := http.NewServeMux()
+	mux.Handle("/", server)
+	mux.Handle("/metrics", promhttp.Handler())
+	mux.HandleFunc("/readyz", readyzHandler)
+	mux.HandleFunc("/livez", livezHandler)
+
+	return &http.Server{
+		Addr:    ":" + cfg.port,
+		Handler: mux,
+	}, nil
+}

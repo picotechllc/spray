@@ -17,6 +17,9 @@ jobs:
   test:
     name: Test with Coverage
     runs-on: ubuntu-latest
+    permissions:
+      contents: 'read'
+      id-token: 'write'
     steps:
       - uses: actions/checkout@v4
 
@@ -35,8 +38,11 @@ jobs:
       - name: Run tests with coverage
         env:
           LOGGING_OFFLINE: "true"
+          GCP_PROJECT: ${{ secrets.GCP_PROJECT }}
+          TEST_BUCKET: ${{ secrets.TEST_BUCKET }}
+          BUCKET_NAME: ${{ secrets.TEST_BUCKET }}
         run: |
-          go test -race -coverprofile=coverage.out -covermode=atomic ./...
+          go test -race -coverprofile=coverage.out -covermode=atomic ./... -tags=!integration
 
       - name: Convert coverage to lcov
         uses: jandelgado/gcov2lcov-action@v1
@@ -97,6 +103,12 @@ jobs:
           version: '>= 416.0.0'
 
       - name: Run integration tests
+        env:
+          TEST_BUCKET: ${{ secrets.TEST_BUCKET }}
+          GCP_PROJECT: ${{ secrets.GCP_PROJECT }}
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS }}
+          TESTING: "false"
+          BUCKET_NAME: ${{ secrets.TEST_BUCKET }}
         run: |
           go test -v -tags=integration ./...
           echo "::notice::Integration tests completed" 

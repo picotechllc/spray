@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"io"
+	"os"
 	"testing"
 
 	"cloud.google.com/go/logging"
@@ -34,23 +35,28 @@ func TestGCSIntegration(t *testing.T) {
 	logger := logClient.Logger("gcs-server")
 
 	// Create a test bucket
-	bucketName := "spray-test-bucket-" + t.Name()
+	bucketName := os.Getenv("TEST_BUCKET")
+	if bucketName == "" {
+		bucketName = "spray-test-bucket-" + t.Name()
+	}
 	bucket := client.Bucket(bucketName)
 
-	// Create the bucket if it doesn't exist
-	_, err = bucket.Attrs(ctx)
-	if err == storage.ErrBucketNotExist {
-		err = bucket.Create(ctx, "test-project", nil)
-		require.NoError(t, err, "Failed to create test bucket")
-		defer func() {
-			// Clean up: delete the bucket after test
-			err := bucket.Delete(ctx)
-			if err != nil {
-				t.Logf("Warning: failed to delete test bucket: %v", err)
-			}
-		}()
-	} else {
-		require.NoError(t, err, "Failed to check bucket existence")
+	// Create the bucket if it doesn't exist and we're using a dynamic bucket
+	if bucketName == "spray-test-bucket-"+t.Name() {
+		_, err = bucket.Attrs(ctx)
+		if err == storage.ErrBucketNotExist {
+			err = bucket.Create(ctx, "test-project", nil)
+			require.NoError(t, err, "Failed to create test bucket")
+			defer func() {
+				// Clean up: delete the bucket after test
+				err := bucket.Delete(ctx)
+				if err != nil {
+					t.Logf("Warning: failed to delete test bucket: %v", err)
+				}
+			}()
+		} else {
+			require.NoError(t, err, "Failed to check bucket existence")
+		}
 	}
 
 	// Create a test object
@@ -62,7 +68,7 @@ func TestGCSIntegration(t *testing.T) {
 	require.NoError(t, err, "Failed to close test object writer")
 
 	// Create the server
-	server, err := newGCSServer(ctx, bucketName, logger, client)
+	server, err := newGCSServer(ctx, bucketName, &gcpLoggerAdapter{logger: logger}, client)
 	require.NoError(t, err, "Failed to create GCS server")
 
 	// Test object retrieval

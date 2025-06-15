@@ -1,14 +1,32 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"net/url"
 	"os"
+	"path/filepath"
+
+	"cloud.google.com/go/storage"
+	"github.com/BurntSushi/toml"
+)
+
+const (
+	configDir     = ".spray"
+	redirectsFile = "redirects.toml"
 )
 
 type config struct {
 	port       string
 	bucketName string
 	projectID  string
+	store      ObjectStore
+	redirects  map[string]string // path -> destination URL
+}
+
+// RedirectConfig represents the structure of the redirects.toml file
+type RedirectConfig struct {
+	Redirects map[string]string `toml:"redirects"`
 }
 
 // validateConfig checks if the config is valid and returns an error if not.
@@ -22,8 +40,44 @@ func validateConfig(cfg *config) error {
 	return nil
 }
 
+// loadRedirects loads redirects from a redirects.toml file in the .spray directory
+func loadRedirects(ctx context.Context, store ObjectStore) (map[string]string, error) {
+	configPath := filepath.Join(configDir, redirectsFile)
+	reader, _, err := store.GetObject(ctx, configPath)
+	if err != nil {
+		if err == storage.ErrObjectNotExist {
+			// No redirects file is fine, return empty map
+			return make(map[string]string), nil
+		}
+		redirectConfigErrors.WithLabelValues("", "read_error").Inc()
+		return nil, fmt.Errorf("error reading redirects file at %s: %v", configPath, err)
+	}
+	defer reader.Close()
+
+	var redirectConfig RedirectConfig
+	if _, err := toml.NewDecoder(reader).Decode(&redirectConfig); err != nil {
+		redirectConfigErrors.WithLabelValues("", "parse_error").Inc()
+		return nil, fmt.Errorf("error parsing redirects file at %s: %v", configPath, err)
+	}
+
+	// Initialize redirects map if it's nil
+	if redirectConfig.Redirects == nil {
+		redirectConfig.Redirects = make(map[string]string)
+	}
+
+	// Validate redirect URLs
+	for path, dest := range redirectConfig.Redirects {
+		if _, err := url.ParseRequestURI(dest); err != nil {
+			redirectConfigErrors.WithLabelValues("", "invalid_url").Inc()
+			return nil, fmt.Errorf("invalid redirect destination URL for path %q: %v", path, err)
+		}
+	}
+
+	return redirectConfig.Redirects, nil
+}
+
 // loadConfig loads configuration from environment variables and the provided base config.
-func loadConfig(base *config) (*config, error) {
+func loadConfig(ctx context.Context, base *config, store ObjectStore) (*config, error) {
 	cfg := &config{
 		port: "8080", // default value
 	}
@@ -36,6 +90,17 @@ func loadConfig(base *config) (*config, error) {
 
 	if err := validateConfig(cfg); err != nil {
 		return nil, err
+	}
+
+	// Load redirects if store is provided
+	if store != nil {
+		redirects, err := loadRedirects(ctx, store)
+		if err != nil {
+			return nil, fmt.Errorf("error loading redirects: %v", err)
+		}
+		cfg.redirects = redirects
+	} else {
+		cfg.redirects = make(map[string]string)
 	}
 
 	return cfg, nil
