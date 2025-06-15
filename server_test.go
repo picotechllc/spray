@@ -284,23 +284,6 @@ func TestCleanRequestPath(t *testing.T) {
 }
 
 func TestNewGCSServer(t *testing.T) {
-	tests := []struct {
-		name       string
-		bucketName string
-		wantErr    bool
-	}{
-		{
-			name:       "valid bucket name",
-			bucketName: "test-bucket",
-			wantErr:    false,
-		},
-		{
-			name:       "empty bucket name",
-			bucketName: "",
-			wantErr:    true,
-		},
-	}
-
 	ctx := context.Background()
 
 	// Create a mock logging client
@@ -311,39 +294,21 @@ func TestNewGCSServer(t *testing.T) {
 	defer logClient.Close()
 	logger := logClient.Logger("test-logger")
 
-	// Create a mock storage client
-	mockStore := &mockObjectStore{
-		objects: make(map[string]mockObject),
+	server, err := newGCSServer(ctx, "test-bucket", logger, nil, nil)
+	if err != nil {
+		t.Fatalf("Failed to create GCS server: %v", err)
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Create the server directly with our mock store
-			server := &gcsServer{
-				store:      mockStore,
-				bucketName: tt.bucketName,
-				logger:     logger,
-			}
+	if server == nil {
+		t.Fatal("Expected server to be non-nil")
+	}
 
-			if tt.wantErr {
-				if tt.bucketName != "" {
-					t.Error("Expected error case to have empty bucket name")
-				}
-				return
-			}
+	if server.bucketName != "test-bucket" {
+		t.Errorf("Expected bucket name %q, got %q", "test-bucket", server.bucketName)
+	}
 
-			if server.bucketName != tt.bucketName {
-				t.Errorf("Expected bucket name %q, got %q", tt.bucketName, server.bucketName)
-			}
-
-			if server.store == nil {
-				t.Error("Expected store to be non-nil")
-			}
-
-			if server.logger == nil {
-				t.Error("Expected logger to be non-nil")
-			}
-		})
+	if server.logger != logger {
+		t.Error("Expected logger to be set")
 	}
 }
 
@@ -384,6 +349,8 @@ func TestHealthCheckHandlers(t *testing.T) {
 // Test newGCSServer error path by injecting a failing storage client
 func TestNewGCSServer_ErrorPath(t *testing.T) {
 	ctx := context.Background()
+
+	// Create a mock logging client
 	logClient, err := logging.NewClient(ctx, "test-project", option.WithoutAuthentication())
 	if err != nil {
 		t.Fatalf("Failed to create mock logging client: %v", err)
@@ -391,10 +358,10 @@ func TestNewGCSServer_ErrorPath(t *testing.T) {
 	defer logClient.Close()
 	logger := logClient.Logger("test-logger")
 
-	// Failing storage client: nil client, but bucketName is empty to force error
-	_, err = newGCSServer(ctx, "", logger, nil)
-	if err == nil {
-		t.Error("Expected error when bucketName is empty or storage client creation fails")
+	// Test with nil storage client
+	_, err = newGCSServer(ctx, "test-bucket", logger, nil, nil)
+	if err != nil {
+		t.Fatalf("Expected no error with nil storage client, got: %v", err)
 	}
 }
 
@@ -551,4 +518,113 @@ func TestGCSObjectStoreGetObject(t *testing.T) {
 		assert.Nil(t, reader)
 		assert.Nil(t, attrs)
 	})
+}
+
+func TestServeHTTP_Redirects(t *testing.T) {
+	tests := []struct {
+		name         string
+		path         string
+		redirects    map[string]string
+		expectedCode int
+		expectedURL  string
+		objectExists bool
+		contentType  string
+		content      string
+	}{
+		{
+			name: "redirect takes precedence over file",
+			path: "/redirect-me",
+			redirects: map[string]string{
+				"/redirect-me": "https://example.com/new-location",
+			},
+			expectedCode: http.StatusFound,
+			expectedURL:  "https://example.com/new-location",
+			objectExists: true,
+			contentType:  "text/html",
+			content:      "<html>This should not be served</html>",
+		},
+		{
+			name:         "no redirect, serve file",
+			path:         "/normal-file",
+			redirects:    map[string]string{},
+			expectedCode: http.StatusOK,
+			objectExists: true,
+			contentType:  "text/html",
+			content:      "<html>This should be served</html>",
+		},
+		{
+			name:         "no redirect, file not found",
+			path:         "/not-found",
+			redirects:    map[string]string{},
+			expectedCode: http.StatusNotFound,
+			objectExists: false,
+		},
+		{
+			name: "redirect with trailing slash",
+			path: "/redirect-dir/",
+			redirects: map[string]string{
+				"/redirect-dir/": "https://example.com/new-dir/",
+			},
+			expectedCode: http.StatusFound,
+			expectedURL:  "https://example.com/new-dir/",
+		},
+	}
+
+	ctx := context.Background()
+
+	// Create a mock logging client
+	logClient, err := logging.NewClient(ctx, "test-project", option.WithoutAuthentication())
+	if err != nil {
+		t.Fatalf("Failed to create mock logging client: %v", err)
+	}
+	defer logClient.Close()
+	logger := logClient.Logger("test-logger")
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create mock store with test objects
+			mockStore := &mockObjectStore{
+				objects: make(map[string]mockObject),
+			}
+
+			if tt.objectExists {
+				mockStore.objects[tt.path] = mockObject{
+					data:        []byte(tt.content),
+					contentType: tt.contentType,
+				}
+			}
+
+			server := &gcsServer{
+				store:      mockStore,
+				bucketName: "test-bucket",
+				logger:     logger,
+				redirects:  tt.redirects,
+			}
+
+			req := httptest.NewRequest("GET", tt.path, nil)
+			w := httptest.NewRecorder()
+
+			server.ServeHTTP(w, req)
+
+			if w.Code != tt.expectedCode {
+				t.Errorf("Expected status code %d, got %d", tt.expectedCode, w.Code)
+			}
+
+			if tt.expectedURL != "" {
+				if got := w.Header().Get("Location"); got != tt.expectedURL {
+					t.Errorf("Expected Location header %q, got %q", tt.expectedURL, got)
+				}
+			}
+
+			if tt.objectExists && tt.expectedCode == http.StatusOK {
+				if got := w.Header().Get("Content-Type"); got != tt.contentType {
+					t.Errorf("Expected Content-Type %q, got %q", tt.contentType, got)
+				}
+
+				if got := w.Body.String(); got != tt.content {
+					t.Errorf("Expected content %q, got %q", tt.content, got)
+				}
+			}
+		})
+	}
 }

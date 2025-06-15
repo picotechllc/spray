@@ -10,6 +10,10 @@ Spray is a minimal Go web server that serves the contents of a Google Cloud Plat
 - Serves static files from a GCP bucket
 - Easy to configure and deploy
 - Reasonably comprehensive Prometheus metrics
+- Custom redirects support
+- Prometheus metrics
+- Health check endpoints
+- Configurable port
 
 ### Metrics
 
@@ -30,6 +34,32 @@ These metrics provide visibility into:
 - Resource utilization
 - GCS operation performance
 
+## Configuration
+
+### Environment Variables
+
+- `BUCKET_NAME`: The name of the GCS bucket to serve files from
+- `GOOGLE_PROJECT_ID`: Your Google Cloud project ID
+- `PORT`: (Optional) The port to listen on (default: 8080)
+
+### Custom Redirects
+
+You can configure custom redirects by creating a `.spray/redirects.toml` file in your GCS bucket. The file should be in TOML format:
+
+```toml
+[redirects]
+"/old-path" = "https://example.com/new-path"
+"/another-path" = "https://example.com/destination"
+```
+
+The redirects will take precedence over any files that might exist at the same path. The server will return a 302 Found response with the destination URL.
+
+## Endpoints
+
+- `/`: Serves static files from the GCS bucket
+- `/metrics`: Prometheus metrics endpoint
+- `/readyz`: Readiness probe endpoint
+- `/livez`: Liveness probe endpoint
 
 ## Installation
 

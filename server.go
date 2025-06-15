@@ -49,10 +49,11 @@ type gcsServer struct {
 	store      ObjectStore
 	bucketName string
 	logger     *logging.Logger
+	redirects  map[string]string
 }
 
 // newGCSServer creates a new gcsServer with the provided storage client and logger.
-func newGCSServer(ctx context.Context, bucketName string, logger *logging.Logger, storageClient *storage.Client) (*gcsServer, error) {
+func newGCSServer(ctx context.Context, bucketName string, logger *logging.Logger, storageClient *storage.Client, redirects map[string]string) (*gcsServer, error) {
 	if storageClient == nil {
 		var err error
 		storageClient, err = storage.NewClient(ctx)
@@ -76,6 +77,7 @@ func newGCSServer(ctx context.Context, bucketName string, logger *logging.Logger
 		store:      store,
 		bucketName: bucketName,
 		logger:     logger,
+		redirects:  redirects,
 	}, nil
 }
 
@@ -147,6 +149,24 @@ func (s *gcsServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		errorTotal.WithLabelValues(s.bucketName, r.URL.Path, "invalid_path").Inc()
 		requestsTotal.WithLabelValues(s.bucketName, r.URL.Path, r.Method, "400").Inc()
 		http.Error(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
+
+	// Check for redirects
+	if destination, exists := s.redirects[cleanPath]; exists {
+		redirectStart := time.Now()
+		s.logger.Log(logging.Entry{
+			Severity: logging.Info,
+			Payload: map[string]any{
+				"path":        cleanPath,
+				"destination": destination,
+				"operation":   "redirect",
+			},
+		})
+		requestsTotal.WithLabelValues(s.bucketName, cleanPath, r.Method, "302").Inc()
+		redirectHits.WithLabelValues(s.bucketName, cleanPath, destination).Inc()
+		redirectLatency.WithLabelValues(s.bucketName, cleanPath).Observe(time.Since(redirectStart).Seconds())
+		http.Redirect(w, r, destination, http.StatusFound)
 		return
 	}
 
@@ -229,7 +249,7 @@ func livezHandler(w http.ResponseWriter, r *http.Request) {
 func createServer(ctx context.Context, cfg *config, logClient *logging.Client) (*http.Server, error) {
 	logger := logClient.Logger("gcs-server")
 
-	server, err := newGCSServer(ctx, cfg.bucketName, logger, nil)
+	server, err := newGCSServer(ctx, cfg.bucketName, logger, nil, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create GCS server: %v", err)
 	}
