@@ -21,7 +21,7 @@ func TestServerSetup(t *testing.T) {
 
 	// Mock loggingClientFactory to avoid real GCP credential lookup
 	origLoggingClientFactory := loggingClientFactory
-	loggingClientFactory = func(ctx context.Context, projectID string) (*logging.Client, error) {
+	loggingClientFactory = func(ctx context.Context, projectID string) (LoggingClient, error) {
 		return logging.NewClient(ctx, projectID, option.WithoutAuthentication())
 	}
 	defer func() { loggingClientFactory = origLoggingClientFactory }()
@@ -35,7 +35,7 @@ func TestServerSetup(t *testing.T) {
 	tests := []struct {
 		name        string
 		cfg         *config
-		setupServer func(context.Context, *config, *logging.Client) (*http.Server, error)
+		setupServer func(context.Context, *config, LoggingClient) (*http.Server, error)
 		wantErr     bool
 	}{
 		{
@@ -45,7 +45,7 @@ func TestServerSetup(t *testing.T) {
 				bucketName: "test-bucket",
 				projectID:  "test-project",
 			},
-			setupServer: func(ctx context.Context, cfg *config, logClient *logging.Client) (*http.Server, error) {
+			setupServer: func(ctx context.Context, cfg *config, logClient LoggingClient) (*http.Server, error) {
 				logger := logClient.Logger("test-logger")
 
 				// Create a mock GCS server
@@ -79,7 +79,7 @@ func TestServerSetup(t *testing.T) {
 				bucketName: "test-bucket",
 				projectID:  "test-project",
 			},
-			setupServer: func(ctx context.Context, cfg *config, logClient *logging.Client) (*http.Server, error) {
+			setupServer: func(ctx context.Context, cfg *config, logClient LoggingClient) (*http.Server, error) {
 				return nil, fmt.Errorf("invalid port")
 			},
 			wantErr: true,
@@ -90,7 +90,7 @@ func TestServerSetup(t *testing.T) {
 				port:      "8080",
 				projectID: "test-project",
 			},
-			setupServer: func(ctx context.Context, cfg *config, logClient *logging.Client) (*http.Server, error) {
+			setupServer: func(ctx context.Context, cfg *config, logClient LoggingClient) (*http.Server, error) {
 				return nil, fmt.Errorf("bucket name is required")
 			},
 			wantErr: true,
@@ -102,7 +102,7 @@ func TestServerSetup(t *testing.T) {
 				bucketName: "test-bucket",
 				projectID:  "test-project",
 			},
-			setupServer: func(ctx context.Context, cfg *config, logClient *logging.Client) (*http.Server, error) {
+			setupServer: func(ctx context.Context, cfg *config, logClient LoggingClient) (*http.Server, error) {
 				return nil, fmt.Errorf("failed to create logging client")
 			},
 			wantErr: true,

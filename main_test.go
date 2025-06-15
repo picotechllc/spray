@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"cloud.google.com/go/logging"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -101,7 +100,7 @@ func TestRunApp_Errors(t *testing.T) {
 	os.Setenv("BUCKET_NAME", "test-bucket")
 	os.Setenv("GOOGLE_PROJECT_ID", "test-project")
 	origLoggingClientFactory := loggingClientFactory
-	loggingClientFactory = func(ctx context.Context, projectID string) (*logging.Client, error) {
+	loggingClientFactory = func(ctx context.Context, projectID string) (LoggingClient, error) {
 		return nil, assert.AnError
 	}
 	t.Cleanup(func() { loggingClientFactory = origLoggingClientFactory })
