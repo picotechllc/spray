@@ -189,7 +189,7 @@ func (s *gcsServer) sendUserFriendlyError(w http.ResponseWriter, r *http.Request
 	switch statusCode {
 	case http.StatusNotFound:
 		severity = logging.Warning
-	case http.StatusInternalServerError, http.StatusForbidden:
+	case http.StatusInternalServerError:
 		severity = logging.Error
 	default:
 		severity = logging.Info
@@ -365,8 +365,8 @@ func (s *gcsServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		if isPermissionError(err) {
 			s.sendUserFriendlyError(
-				w, r, cleanPath, http.StatusForbidden,
-				"Access to this resource is not available at the moment. Please try again later.",
+				w, r, cleanPath, http.StatusInternalServerError,
+				"The service is temporarily unavailable due to a configuration issue. Please try again later.",
 				err,
 			)
 			return
