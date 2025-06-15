@@ -1,3 +1,5 @@
-config.json
+## OS-specific metadata unrelated to the project
 .DS_Store
+## Binaries
 spray
+spray.exe
