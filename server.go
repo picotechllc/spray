@@ -227,18 +227,14 @@ func (s *gcsServer) sendUserFriendlyError(w http.ResponseWriter, r *http.Request
             padding: 2rem;
             background-color: #f5f5f5;
             color: #333;
-            min-height: 100vh;
-            display: flex;
-            flex-direction: column;
         }
         .container {
             max-width: 600px;
-            margin: 0 auto;
+            margin: 0 auto 2rem auto;
             background: white;
             padding: 2rem;
             border-radius: 8px;
             box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-            flex: 1;
         }
         h1 {
             color: #d73a49;
@@ -261,7 +257,8 @@ func (s *gcsServer) sendUserFriendlyError(w http.ResponseWriter, r *http.Request
             border-left: 4px solid #0366d6;
         }
         .footer {
-            margin-top: 2rem;
+            max-width: 600px;
+            margin: 0 auto;
             padding: 1rem;
             text-align: center;
             color: #666;

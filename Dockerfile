@@ -1,6 +1,9 @@
 # Use the official Golang image to create a build artifact.
 FROM golang:1.24.4 AS builder
 
+# Accept version as build argument
+ARG VERSION=docker-dev
+
 # Set the Current Working Directory inside the container
 WORKDIR /app
 
@@ -13,8 +16,8 @@ RUN go mod download
 # Copy the source from the current directory to the Working Directory inside the container
 COPY . .
 
-# Build the Go app
-RUN CGO_ENABLED=0 GOOS=linux go build -o spray .
+# Build the Go app with version information
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags "-X main.Version=${VERSION}" -o spray .
 
 # Start a new stage from scratch
 FROM gcr.io/distroless/static-debian12
