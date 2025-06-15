@@ -106,6 +106,7 @@ func loadConfig(ctx context.Context, base *config, store ObjectStore) (*config, 
 
 	cfg.bucketName = os.Getenv("BUCKET_NAME")
 	cfg.projectID = os.Getenv("GOOGLE_PROJECT_ID")
+	cfg.store = store // Assign the store to the config
 
 	if err := validateConfig(cfg); err != nil {
 		return nil, err

@@ -229,7 +229,7 @@ func livezHandler(w http.ResponseWriter, r *http.Request) {
 func createServer(ctx context.Context, cfg *config, logClient LoggingClient) (*http.Server, error) {
 	logger := logClient.Logger("gcs-server")
 
-	server, err := newGCSServer(ctx, cfg.bucketName, logger, nil, nil)
+	server, err := newGCSServer(ctx, cfg.bucketName, logger, cfg.store, cfg.redirects)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create GCS server: %v", err)
 	}
