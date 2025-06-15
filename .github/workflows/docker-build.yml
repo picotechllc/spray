@@ -146,8 +146,10 @@ jobs:
   create-manifest:
     needs: [tag, build-amd64, build-arm64]
     runs-on: ubuntu-latest
+
     # Only create multi-platform manifest if ARM64 was built
     if: always() && needs.build-amd64.result == 'success' && (needs.build-arm64.result == 'success' || needs.build-arm64.result == 'skipped')
+
     steps:
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3

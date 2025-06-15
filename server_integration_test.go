@@ -16,11 +16,6 @@ import (
 )
 
 func TestGCSIntegration(t *testing.T) {
-	// Skip if not running integration tests
-	if testing.Short() {
-		t.Skip("Skipping integration test in short mode")
-	}
-
 	ctx := context.Background()
 
 	// Set up authentication for CI environment
@@ -76,8 +71,13 @@ func TestGCSIntegration(t *testing.T) {
 	err = w.Close()
 	require.NoError(t, err, "Failed to close test object writer")
 
-	// Create the server
-	server, err := newGCSServer(ctx, bucketName, &gcpLoggerAdapter{logger: logger}, client)
+	// Create the GCS object store
+	store := &GCSObjectStore{
+		bucket: bucket,
+	}
+
+	// Create the server with updated signature
+	server, err := newGCSServer(ctx, bucketName, &gcpLoggerAdapter{logger: logger}, store, make(map[string]string))
 	require.NoError(t, err, "Failed to create GCS server")
 
 	// Test object retrieval
