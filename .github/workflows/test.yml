@@ -9,6 +9,10 @@ on:
       - '**'
       - '!.github/workflows/**'
 
+env:
+  GO111MODULE: on
+  GOFLAGS: -mod=readonly
+
 jobs:
   test:
     name: Test with Coverage
@@ -19,27 +23,72 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          go-version: '1.23.4'
+          check-latest: true
           cache: true
 
-      - name: Run Tests with Coverage
-        id: test
-        continue-on-error: true
-        run: go test -v -race -coverprofile=coverage.txt -covermode=atomic ./...
+      - name: Clean Go cache
+        run: |
+          go clean -cache -modcache -i -r
+          rm -rf ~/go/pkg/mod
+
+      - name: Run tests with coverage
+        env:
+          LOGGING_OFFLINE: "true"
+        run: |
+          go test -race -coverprofile=coverage.out -covermode=atomic ./...
 
       - name: Convert coverage to lcov
-        if: always()
-        uses: jandelgado/gcov2lcov-action@v1.0.9
+        uses: jandelgado/gcov2lcov-action@v1
         with:
-          infile: coverage.txt
+          infile: coverage.out
           outfile: coverage.lcov
 
-      - name: Send coverage to Coveralls
-        if: always()
+      - name: Upload coverage to Coveralls
         uses: coverallsapp/github-action@v2
         with:
           file: coverage.lcov
 
       - name: Check test status
         if: steps.test.outcome == 'failure'
-        run: exit 1 
+        run: exit 1
+
+  integration-test:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    continue-on-error: true
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.4'
+          check-latest: true
+          cache: true
+
+      - name: Clean Go cache
+        run: |
+          go clean -cache -modcache -i -r
+          rm -rf ~/go/pkg/mod
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ secrets.GCP_PROJECT }}
+          version: '>= 416.0.0'
+
+      - name: Run integration tests
+        run: |
+          go test -v -tags=integration ./...
+          echo "::notice::Integration tests completed" 

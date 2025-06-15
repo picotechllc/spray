@@ -4,13 +4,18 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
+	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"cloud.google.com/go/logging"
 	"cloud.google.com/go/storage"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 // ObjectStore defines the interface for storage operations
@@ -23,6 +28,7 @@ type GCSObjectStore struct {
 	bucket *storage.BucketHandle
 }
 
+// GetObject retrieves an object from the GCS bucket
 func (s *GCSObjectStore) GetObject(ctx context.Context, path string) (io.ReadCloser, *storage.ObjectAttrs, error) {
 	obj := s.bucket.Object(path)
 	reader, err := obj.NewReader(ctx)
@@ -45,21 +51,25 @@ type gcsServer struct {
 	logger     *logging.Logger
 }
 
-func newGCSServer(ctx context.Context, bucketName string, logger *logging.Logger) (*gcsServer, error) {
-	client, err := storage.NewClient(ctx)
-	if err != nil {
-		logger.Log(logging.Entry{
-			Severity: logging.Error,
-			Payload: map[string]any{
-				"error":     err.Error(),
-				"operation": "create_storage_client",
-			},
-		})
-		return nil, fmt.Errorf("failed to create client: %v", err)
+// newGCSServer creates a new gcsServer with the provided storage client and logger.
+func newGCSServer(ctx context.Context, bucketName string, logger *logging.Logger, storageClient *storage.Client) (*gcsServer, error) {
+	if storageClient == nil {
+		var err error
+		storageClient, err = storage.NewClient(ctx)
+		if err != nil {
+			logger.Log(logging.Entry{
+				Severity: logging.Error,
+				Payload: map[string]any{
+					"error":     err.Error(),
+					"operation": "create_storage_client",
+				},
+			})
+			return nil, fmt.Errorf("failed to create client: %v", err)
+		}
 	}
 
 	store := &GCSObjectStore{
-		bucket: client.Bucket(bucketName),
+		bucket: storageClient.Bucket(bucketName),
 	}
 
 	return &gcsServer{
@@ -213,4 +223,72 @@ func readyzHandler(w http.ResponseWriter, r *http.Request) {
 func livezHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("ok"))
+}
+
+// createServer creates a new HTTP server with the given configuration.
+func createServer(ctx context.Context, cfg *config, logClient *logging.Client) (*http.Server, error) {
+	logger := logClient.Logger("gcs-server")
+
+	server, err := newGCSServer(ctx, cfg.bucketName, logger, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create GCS server: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	mux.Handle("/", server)
+	mux.Handle("/metrics", promhttp.Handler())
+	mux.HandleFunc("/readyz", readyzHandler)
+	mux.HandleFunc("/livez", livezHandler)
+
+	return &http.Server{
+		Addr:    ":" + cfg.port,
+		Handler: mux,
+	}, nil
+}
+
+// handleSignals is a package-level variable to allow overriding in tests.
+var handleSignals = handleSignalsImpl
+
+// handleSignalsImpl sets up signal handling and returns a channel that will be closed when a signal is received.
+func handleSignalsImpl() chan struct{} {
+	shutdown := make(chan struct{})
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+
+	go func() {
+		<-sigChan
+		close(shutdown)
+	}()
+
+	return shutdown
+}
+
+// runServer is a package-level variable to allow mocking in tests.
+var runServer = runServerImpl
+
+// runServerImpl runs the HTTP server until it is shut down.
+func runServerImpl(ctx context.Context, srv *http.Server) error {
+	serverErrors := make(chan error, 1)
+	go func() {
+		log.Printf("Server started on port %s", srv.Addr)
+		serverErrors <- srv.ListenAndServe()
+	}()
+
+	shutdown := handleSignals()
+
+	select {
+	case err := <-serverErrors:
+		return fmt.Errorf("server error: %v", err)
+	case <-shutdown:
+		log.Println("Starting shutdown...")
+
+		ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+
+		if err := srv.Shutdown(ctx); err != nil {
+			return fmt.Errorf("graceful shutdown failed: %v", err)
+		}
+	}
+
+	return nil
 }

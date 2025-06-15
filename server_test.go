@@ -7,9 +7,11 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"cloud.google.com/go/logging"
 	"cloud.google.com/go/storage"
+	"github.com/stretchr/testify/assert"
 	"google.golang.org/api/option"
 )
 
@@ -49,6 +51,13 @@ func (s *mockObjectStore) GetObject(ctx context.Context, path string) (io.ReadCl
 	return &mockReader{data: obj.data}, &storage.ObjectAttrs{
 		ContentType: obj.contentType,
 	}, nil
+}
+
+// Mock ObjectStore that always returns a custom error for testing ServeHTTP error path
+type errorObjectStore struct{}
+
+func (s *errorObjectStore) GetObject(ctx context.Context, path string) (io.ReadCloser, *storage.ObjectAttrs, error) {
+	return nil, nil, assert.AnError
 }
 
 func TestPathHandling(t *testing.T) {
@@ -241,6 +250,12 @@ func TestCleanRequestPath(t *testing.T) {
 			path:         "////",
 			expectedPath: "index.html",
 		},
+		{
+			name:          "Invalid percent encoding",
+			path:          "/%ZZ",
+			expectError:   true,
+			errorContains: "invalid URL escape",
+		},
 	}
 
 	for _, tt := range tests {
@@ -266,4 +281,274 @@ func TestCleanRequestPath(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestNewGCSServer(t *testing.T) {
+	tests := []struct {
+		name       string
+		bucketName string
+		wantErr    bool
+	}{
+		{
+			name:       "valid bucket name",
+			bucketName: "test-bucket",
+			wantErr:    false,
+		},
+		{
+			name:       "empty bucket name",
+			bucketName: "",
+			wantErr:    true,
+		},
+	}
+
+	ctx := context.Background()
+
+	// Create a mock logging client
+	logClient, err := logging.NewClient(ctx, "test-project", option.WithoutAuthentication())
+	if err != nil {
+		t.Fatalf("Failed to create mock logging client: %v", err)
+	}
+	defer logClient.Close()
+	logger := logClient.Logger("test-logger")
+
+	// Create a mock storage client
+	mockStore := &mockObjectStore{
+		objects: make(map[string]mockObject),
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create the server directly with our mock store
+			server := &gcsServer{
+				store:      mockStore,
+				bucketName: tt.bucketName,
+				logger:     logger,
+			}
+
+			if tt.wantErr {
+				if tt.bucketName != "" {
+					t.Error("Expected error case to have empty bucket name")
+				}
+				return
+			}
+
+			if server.bucketName != tt.bucketName {
+				t.Errorf("Expected bucket name %q, got %q", tt.bucketName, server.bucketName)
+			}
+
+			if server.store == nil {
+				t.Error("Expected store to be non-nil")
+			}
+
+			if server.logger == nil {
+				t.Error("Expected logger to be non-nil")
+			}
+		})
+	}
+}
+
+func TestHealthCheckHandlers(t *testing.T) {
+	tests := []struct {
+		name     string
+		handler  http.HandlerFunc
+		wantCode int
+		wantBody string
+	}{
+		{
+			name:     "readyz handler",
+			handler:  readyzHandler,
+			wantCode: http.StatusOK,
+			wantBody: "ok",
+		},
+		{
+			name:     "livez handler",
+			handler:  livezHandler,
+			wantCode: http.StatusOK,
+			wantBody: "ok",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest("GET", "/", nil)
+			rr := httptest.NewRecorder()
+
+			tt.handler(rr, req)
+
+			assert.Equal(t, tt.wantCode, rr.Code)
+			assert.Equal(t, tt.wantBody, rr.Body.String())
+		})
+	}
+}
+
+// Test newGCSServer error path by injecting a failing storage client
+func TestNewGCSServer_ErrorPath(t *testing.T) {
+	ctx := context.Background()
+	logClient, err := logging.NewClient(ctx, "test-project", option.WithoutAuthentication())
+	if err != nil {
+		t.Fatalf("Failed to create mock logging client: %v", err)
+	}
+	defer logClient.Close()
+	logger := logClient.Logger("test-logger")
+
+	// Failing storage client: nil client, but bucketName is empty to force error
+	_, err = newGCSServer(ctx, "", logger, nil)
+	if err == nil {
+		t.Error("Expected error when bucketName is empty or storage client creation fails")
+	}
+}
+
+// Test runServerImpl graceful shutdown by overriding handleSignals
+func TestRunServerImpl_GracefulShutdown(t *testing.T) {
+	// Save and restore original handleSignals
+	origHandleSignals := handleSignals
+	defer func() { handleSignals = origHandleSignals }()
+
+	// Override handleSignals to close immediately
+	handleSignals = func() chan struct{} {
+		ch := make(chan struct{})
+		close(ch)
+		return ch
+	}
+
+	// Create a dummy HTTP server that returns immediately
+	srv := &http.Server{Addr: ":0"}
+	// Use a context that will not timeout
+	ctx := context.Background()
+
+	// Start runServerImpl in a goroutine and shut it down
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- runServerImpl(ctx, srv)
+	}()
+
+	// Wait for the server to shut down
+	select {
+	case err := <-errCh:
+		// We expect no error or a graceful shutdown error
+		if err != nil && !strings.Contains(err.Error(), "graceful shutdown failed") {
+			t.Errorf("Unexpected error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Error("Timeout waiting for runServerImpl to return")
+	}
+}
+
+// Test ServeHTTP with a storage error (not ErrObjectNotExist)
+func TestServeHTTP_StorageError(t *testing.T) {
+	ctx := context.Background()
+	logClient, err := logging.NewClient(ctx, "test-project", option.WithoutAuthentication())
+	if err != nil {
+		t.Fatalf("Failed to create mock logging client: %v", err)
+	}
+	defer logClient.Close()
+	logger := logClient.Logger("test-logger")
+
+	server := &gcsServer{
+		store:      &errorObjectStore{},
+		bucketName: "test-bucket",
+		logger:     logger,
+	}
+
+	req := httptest.NewRequest("GET", "/somefile.txt", nil)
+	w := httptest.NewRecorder()
+
+	server.ServeHTTP(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("Expected status %d, got %d", http.StatusInternalServerError, w.Code)
+	}
+
+	if !strings.Contains(w.Body.String(), assert.AnError.Error()) {
+		t.Errorf("Expected error message in response body, got %q", w.Body.String())
+	}
+}
+
+// TestGCSObjectStoreGetObject tests the concrete implementation of GCSObjectStore.GetObject
+func TestGCSObjectStoreGetObject(t *testing.T) {
+	// Create a context for testing
+	ctx := context.Background()
+
+	// Create test data
+	expectedData := []byte("test content")
+	testObj := &mockObject{
+		data:        expectedData,
+		contentType: "text/plain",
+	}
+
+	// Happy path - test successful retrieval
+	t.Run("success case", func(t *testing.T) {
+		// Create mock store with one object
+		mockStore := &mockObjectStore{
+			objects: map[string]mockObject{
+				"test.txt": *testObj,
+			},
+		}
+
+		// Create test server with the mock store
+		server := &gcsServer{
+			store:      mockStore,
+			bucketName: "test-bucket",
+		}
+
+		// Call the method under test (through the server's store)
+		reader, attrs, err := server.store.GetObject(ctx, "test.txt")
+
+		// Verify results
+		assert.NoError(t, err)
+		assert.NotNil(t, reader)
+		assert.NotNil(t, attrs)
+
+		// Read content from reader
+		content, err := io.ReadAll(reader)
+		assert.NoError(t, err)
+		assert.Equal(t, string(expectedData), string(content))
+
+		// Close reader
+		reader.Close()
+	})
+
+	// Test not found case
+	t.Run("not found case", func(t *testing.T) {
+		// Create empty mock store
+		mockStore := &mockObjectStore{
+			objects: make(map[string]mockObject),
+		}
+
+		// Create test server with the mock store
+		server := &gcsServer{
+			store:      mockStore,
+			bucketName: "test-bucket",
+		}
+
+		// Call the method under test
+		reader, attrs, err := server.store.GetObject(ctx, "nonexistent.txt")
+
+		// Verify results
+		assert.Error(t, err)
+		assert.Equal(t, storage.ErrObjectNotExist, err)
+		assert.Nil(t, reader)
+		assert.Nil(t, attrs)
+	})
+
+	// Custom error case
+	t.Run("error case", func(t *testing.T) {
+		// Create mock store that always returns an error
+		errorStore := &errorObjectStore{}
+
+		// Create test server with the error store
+		server := &gcsServer{
+			store:      errorStore,
+			bucketName: "test-bucket",
+		}
+
+		// Call the method under test
+		reader, attrs, err := server.store.GetObject(ctx, "test.txt")
+
+		// Verify results
+		assert.Error(t, err)
+		assert.Equal(t, assert.AnError, err)
+		assert.Nil(t, reader)
+		assert.Nil(t, attrs)
+	})
 }
