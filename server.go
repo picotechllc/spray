@@ -227,6 +227,9 @@ func (s *gcsServer) sendUserFriendlyError(w http.ResponseWriter, r *http.Request
             padding: 2rem;
             background-color: #f5f5f5;
             color: #333;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
         }
         .container {
             max-width: 600px;
@@ -235,6 +238,7 @@ func (s *gcsServer) sendUserFriendlyError(w http.ResponseWriter, r *http.Request
             padding: 2rem;
             border-radius: 8px;
             box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            flex: 1;
         }
         h1 {
             color: #d73a49;
@@ -256,6 +260,21 @@ func (s *gcsServer) sendUserFriendlyError(w http.ResponseWriter, r *http.Request
             border-radius: 4px;
             border-left: 4px solid #0366d6;
         }
+        .footer {
+            margin-top: 2rem;
+            padding: 1rem;
+            text-align: center;
+            color: #666;
+            font-size: 0.9rem;
+            border-top: 1px solid #e1e4e8;
+        }
+        .footer a {
+            color: #0366d6;
+            text-decoration: none;
+        }
+        .footer a:hover {
+            text-decoration: underline;
+        }
     </style>
 </head>
 <body>
@@ -272,8 +291,11 @@ func (s *gcsServer) sendUserFriendlyError(w http.ResponseWriter, r *http.Request
             </ul>
         </div>
     </div>
+    <footer class="footer">
+        <a href="https://github.com/picotechllc/spray" target="_blank" rel="noopener">spray</a>/%s
+    </footer>
 </body>
-</html>`, statusCode, http.StatusText(statusCode), statusCode, http.StatusText(statusCode), userMessage)
+</html>`, statusCode, http.StatusText(statusCode), statusCode, http.StatusText(statusCode), userMessage, Version)
 
 		w.Write([]byte(htmlResponse))
 		return
