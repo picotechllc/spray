@@ -11,6 +11,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// storageClientFactory is a variable that can be replaced in tests
+var storageClientFactory = func(ctx context.Context) (StorageClient, error) {
+	return storage.NewClient(ctx)
+}
+
 func main() {
 	ctx := context.Background()
 
@@ -28,7 +33,7 @@ func main() {
 	}
 
 	// Create storage client
-	storageClient, err := storage.NewClient(ctx)
+	storageClient, err := storageClientFactory(ctx)
 	if err != nil {
 		log.Fatalf("Failed to create storage client: %v", err)
 	}
@@ -83,7 +88,7 @@ func RunApp(ctx context.Context, port string) error {
 	defer logClient.Close()
 
 	// Create storage client
-	storageClient, err := storage.NewClient(ctx)
+	storageClient, err := storageClientFactory(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to create storage client: %v", err)
 	}

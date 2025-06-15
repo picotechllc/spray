@@ -113,10 +113,12 @@ func TestRunApp_Errors(t *testing.T) {
 	// Save originals
 	origDefaultServerSetup := DefaultServerSetup
 	origRunServer := runServer
+	origStorageClientFactory := storageClientFactory
 
 	t.Cleanup(func() {
 		DefaultServerSetup = origDefaultServerSetup
 		runServer = origRunServer
+		storageClientFactory = origStorageClientFactory
 	})
 
 	// --- Server setup error ---
@@ -135,6 +137,11 @@ func TestRunApp_Errors(t *testing.T) {
 	// Use a valid config and logging client
 	DefaultServerSetup = func(ctx context.Context, c *config, l LoggingClient) (*http.Server, error) {
 		return &http.Server{}, nil
+	}
+
+	// Mock storage client factory to avoid Google Cloud credentials issues
+	storageClientFactory = func(ctx context.Context) (StorageClient, error) {
+		return newMockStorageClient(), nil
 	}
 
 	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)

@@ -62,7 +62,7 @@ func loadRedirects(ctx context.Context, store ObjectStore) (map[string]string, e
 
 	// Validate redirect URLs
 	for path, dest := range redirectConfig.Redirects {
-		if _, err := url.Parse(dest); err != nil {
+		if _, err := url.ParseRequestURI(dest); err != nil {
 			redirectConfigErrors.WithLabelValues("", "invalid_url").Inc()
 			return nil, fmt.Errorf("invalid redirect destination URL for path %q: %v", path, err)
 		}

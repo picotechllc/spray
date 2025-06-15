@@ -72,7 +72,9 @@ func newMockLogClient() *mockLogClient {
 
 // Logger returns a new logger
 func (c *mockLogClient) Logger(name string, opts ...logging.LoggerOption) *logging.Logger {
-	return &logging.Logger{}
+	// Create a minimal logger that won't panic
+	logger := &logging.Logger{}
+	return logger
 }
 
 // Close closes the client
