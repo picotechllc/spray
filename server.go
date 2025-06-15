@@ -45,6 +45,12 @@ func (s *GCSObjectStore) GetObject(ctx context.Context, path string) (io.ReadClo
 	return reader, attrs, nil
 }
 
+// StorageClient defines the interface for storage operations
+type StorageClient interface {
+	Bucket(name string) *storage.BucketHandle
+	Close() error
+}
+
 type gcsServer struct {
 	store      ObjectStore
 	bucketName string
@@ -53,10 +59,10 @@ type gcsServer struct {
 }
 
 // newGCSServer creates a new gcsServer with the provided storage client and logger.
-func newGCSServer(ctx context.Context, bucketName string, logger *logging.Logger, storageClient *storage.Client, redirects map[string]string) (*gcsServer, error) {
+func newGCSServer(ctx context.Context, bucketName string, logger *logging.Logger, storageClient StorageClient, redirects map[string]string) (*gcsServer, error) {
 	if storageClient == nil {
 		var err error
-		storageClient, err = storage.NewClient(ctx)
+		client, err := storage.NewClient(ctx)
 		if err != nil {
 			logger.Log(logging.Entry{
 				Severity: logging.Error,
@@ -67,6 +73,7 @@ func newGCSServer(ctx context.Context, bucketName string, logger *logging.Logger
 			})
 			return nil, fmt.Errorf("failed to create client: %v", err)
 		}
+		storageClient = client
 	}
 
 	store := &GCSObjectStore{

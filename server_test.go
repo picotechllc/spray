@@ -60,6 +60,52 @@ func (s *errorObjectStore) GetObject(ctx context.Context, path string) (io.ReadC
 	return nil, nil, assert.AnError
 }
 
+// Mock logging client for testing
+type mockLogClient struct {
+	*logging.Client
+}
+
+func newMockLogClient() *mockLogClient {
+	return &mockLogClient{}
+}
+
+func (c *mockLogClient) Logger(name string) *logging.Logger {
+	return &logging.Logger{}
+}
+
+func (c *mockLogClient) Close() error {
+	return nil
+}
+
+// Mock storage client for testing
+type mockStorageClient struct{}
+
+func newMockStorageClient() StorageClient {
+	return &mockStorageClient{}
+}
+
+func (c *mockStorageClient) Bucket(name string) *storage.BucketHandle {
+	return &storage.BucketHandle{}
+}
+
+func (c *mockStorageClient) Close() error {
+	return nil
+}
+
+// Helper function to create a mock server for testing
+func createMockServer(t *testing.T, objects map[string]mockObject, redirects map[string]string) *gcsServer {
+	store := &mockObjectStore{
+		objects: objects,
+	}
+
+	return &gcsServer{
+		store:      store,
+		bucketName: "test-bucket",
+		logger:     &logging.Logger{},
+		redirects:  redirects,
+	}
+}
+
 func TestPathHandling(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -133,35 +179,18 @@ func TestPathHandling(t *testing.T) {
 		},
 	}
 
-	ctx := context.Background()
-
-	// Create a mock logging client
-	logClient, err := logging.NewClient(ctx, "test-project", option.WithoutAuthentication())
-	if err != nil {
-		t.Fatalf("Failed to create mock logging client: %v", err)
-	}
-	defer logClient.Close()
-	logger := logClient.Logger("test-logger")
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Create mock store with test objects
-			mockStore := &mockObjectStore{
-				objects: make(map[string]mockObject),
-			}
-
+			objects := make(map[string]mockObject)
 			if tt.objectExists {
-				mockStore.objects[tt.expectedPath] = mockObject{
+				objects[tt.expectedPath] = mockObject{
 					data:        []byte(tt.content),
 					contentType: tt.contentType,
 				}
 			}
 
-			server := &gcsServer{
-				store:      mockStore,
-				bucketName: "test-bucket",
-				logger:     logger,
-			}
+			server := createMockServer(t, objects, nil)
 
 			req := httptest.NewRequest("GET", tt.path, nil)
 			w := httptest.NewRecorder()
@@ -287,14 +316,10 @@ func TestNewGCSServer(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a mock logging client
-	logClient, err := logging.NewClient(ctx, "test-project", option.WithoutAuthentication())
-	if err != nil {
-		t.Fatalf("Failed to create mock logging client: %v", err)
-	}
-	defer logClient.Close()
+	logClient := &mockLogClient{}
 	logger := logClient.Logger("test-logger")
 
-	server, err := newGCSServer(ctx, "test-bucket", logger, nil, nil)
+	server, err := newGCSServer(ctx, "test-bucket", logger, newMockStorageClient(), nil)
 	if err != nil {
 		t.Fatalf("Failed to create GCS server: %v", err)
 	}
@@ -351,15 +376,11 @@ func TestNewGCSServer_ErrorPath(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a mock logging client
-	logClient, err := logging.NewClient(ctx, "test-project", option.WithoutAuthentication())
-	if err != nil {
-		t.Fatalf("Failed to create mock logging client: %v", err)
-	}
-	defer logClient.Close()
+	logClient := &mockLogClient{}
 	logger := logClient.Logger("test-logger")
 
 	// Test with nil storage client
-	_, err = newGCSServer(ctx, "test-bucket", logger, nil, nil)
+	_, err := newGCSServer(ctx, "test-bucket", logger, nil, nil)
 	if err != nil {
 		t.Fatalf("Expected no error with nil storage client, got: %v", err)
 	}
@@ -535,7 +556,7 @@ func TestServeHTTP_Redirects(t *testing.T) {
 			name: "redirect takes precedence over file",
 			path: "/redirect-me",
 			redirects: map[string]string{
-				"/redirect-me": "https://example.com/new-location",
+				"redirect-me": "https://example.com/new-location",
 			},
 			expectedCode: http.StatusFound,
 			expectedURL:  "https://example.com/new-location",
@@ -563,43 +584,30 @@ func TestServeHTTP_Redirects(t *testing.T) {
 			name: "redirect with trailing slash",
 			path: "/redirect-dir/",
 			redirects: map[string]string{
-				"/redirect-dir/": "https://example.com/new-dir/",
+				"redirect-dir/index.html": "https://example.com/new-dir/",
 			},
 			expectedCode: http.StatusFound,
 			expectedURL:  "https://example.com/new-dir/",
 		},
 	}
 
-	ctx := context.Background()
-
-	// Create a mock logging client
-	logClient, err := logging.NewClient(ctx, "test-project", option.WithoutAuthentication())
-	if err != nil {
-		t.Fatalf("Failed to create mock logging client: %v", err)
-	}
-	defer logClient.Close()
-	logger := logClient.Logger("test-logger")
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Create mock store with test objects
-			mockStore := &mockObjectStore{
-				objects: make(map[string]mockObject),
-			}
-
+			objects := make(map[string]mockObject)
 			if tt.objectExists {
-				mockStore.objects[tt.path] = mockObject{
+				// For paths with trailing slash, we need to add index.html
+				path := tt.path
+				if strings.HasSuffix(path, "/") {
+					path = strings.TrimSuffix(path, "/") + "/index.html"
+				}
+				objects[path] = mockObject{
 					data:        []byte(tt.content),
 					contentType: tt.contentType,
 				}
 			}
 
-			server := &gcsServer{
-				store:      mockStore,
-				bucketName: "test-bucket",
-				logger:     logger,
-				redirects:  tt.redirects,
-			}
+			server := createMockServer(t, objects, tt.redirects)
 
 			req := httptest.NewRequest("GET", tt.path, nil)
 			w := httptest.NewRecorder()

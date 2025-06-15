@@ -69,9 +69,10 @@ func TestLoadRedirects(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			store := &mockRedirectStore{
-				objects: map[string]string{
-					".spray/redirects.toml": tt.configContent,
-				},
+				objects: make(map[string]string),
+			}
+			if tt.configContent != "" {
+				store.objects[".spray/redirects.toml"] = tt.configContent
 			}
 
 			redirects, err := loadRedirects(context.Background(), store)

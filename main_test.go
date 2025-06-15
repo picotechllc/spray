@@ -12,7 +12,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/api/option"
 )
 
 func TestRun(t *testing.T) {
@@ -21,19 +20,10 @@ func TestRun(t *testing.T) {
 	defer func() { DefaultServerSetup = originalSetup }()
 
 	// Create a mock server setup function
-	DefaultServerSetup = func(ctx context.Context, cfg *config, logClient *logging.Client) (*http.Server, error) {
-		logger := logClient.Logger("test-logger")
-
+	DefaultServerSetup = func(ctx context.Context, cfg *config, logClient LoggingClient) (*http.Server, error) {
 		// Create a mock GCS server
-		mockStore := &mockObjectStore{
-			objects: make(map[string]mockObject),
-		}
-
-		server := &gcsServer{
-			store:      mockStore,
-			bucketName: cfg.bucketName,
-			logger:     logger,
-		}
+		objects := make(map[string]mockObject)
+		server := createMockServer(t, objects, nil)
 
 		mux := http.NewServeMux()
 		mux.Handle("/", server)
@@ -59,9 +49,7 @@ func TestRun(t *testing.T) {
 	}
 
 	// Create a mock logging client
-	logClient, err := logging.NewClient(ctx, "test-project", option.WithoutAuthentication())
-	require.NoError(t, err)
-	defer logClient.Close()
+	logClient := newMockLogClient()
 
 	// Create the server first
 	srv, err := DefaultServerSetup(ctx, cfg, logClient)
@@ -133,7 +121,7 @@ func TestRunApp_Errors(t *testing.T) {
 	})
 
 	// --- Server setup error ---
-	DefaultServerSetup = func(ctx context.Context, cfg *config, logClient *logging.Client) (*http.Server, error) {
+	DefaultServerSetup = func(ctx context.Context, cfg *config, logClient LoggingClient) (*http.Server, error) {
 		return nil, assert.AnError
 	}
 	err = RunApp(ctx, "8080")
@@ -146,7 +134,7 @@ func TestRunApp_Errors(t *testing.T) {
 	}
 
 	// Use a valid config and logging client
-	DefaultServerSetup = func(ctx context.Context, c *config, l *logging.Client) (*http.Server, error) {
+	DefaultServerSetup = func(ctx context.Context, c *config, l LoggingClient) (*http.Server, error) {
 		return &http.Server{}, nil
 	}
 

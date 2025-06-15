@@ -9,11 +9,17 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-// ServerSetup is a function type that creates a new server
-type ServerSetup func(context.Context, *config, *logging.Client) (*http.Server, error)
+// LoggingClient defines the interface for logging operations
+type LoggingClient interface {
+	Logger(name string) *logging.Logger
+	Close() error
+}
+
+// ServerSetup is a function type for setting up the server
+type ServerSetup func(ctx context.Context, cfg *config, logClient LoggingClient) (*http.Server, error)
 
 // defaultServerSetup creates a new server with default configuration
-func defaultServerSetup(ctx context.Context, cfg *config, logClient *logging.Client) (*http.Server, error) {
+func defaultServerSetup(ctx context.Context, cfg *config, logClient LoggingClient) (*http.Server, error) {
 	logger := logClient.Logger("gcs-server")
 
 	server, err := newGCSServer(ctx, cfg.bucketName, logger, nil, cfg.redirects)
@@ -33,5 +39,23 @@ func defaultServerSetup(ctx context.Context, cfg *config, logClient *logging.Cli
 	}, nil
 }
 
-// DefaultServerSetup is the default server setup implementation
-var DefaultServerSetup ServerSetup = defaultServerSetup
+// DefaultServerSetup is the default server setup function
+var DefaultServerSetup ServerSetup = func(ctx context.Context, cfg *config, logClient LoggingClient) (*http.Server, error) {
+	logger := logClient.Logger("gcs-server")
+
+	server, err := newGCSServer(ctx, cfg.bucketName, logger, nil, cfg.redirects)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create GCS server: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	mux.Handle("/", server)
+	mux.Handle("/metrics", promhttp.Handler())
+	mux.HandleFunc("/readyz", readyzHandler)
+	mux.HandleFunc("/livez", livezHandler)
+
+	return &http.Server{
+		Addr:    ":" + cfg.port,
+		Handler: mux,
+	}, nil
+}
