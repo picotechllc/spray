@@ -31,7 +31,48 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  build:
+  build-amd64:
+    needs: tag
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Fetch tags
+        run: git fetch --tags
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Cache Go modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            /go/pkg/mod
+          key: ${{ runner.os }}-go-amd64-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-amd64-
+            ${{ runner.os }}-go-
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push AMD64 image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/spray:${{ needs.tag.outputs.new_version }}-amd64
+          cache-from: type=gha,scope=amd64
+          cache-to: type=gha,mode=max,scope=amd64
+
+  build-arm64:
     needs: tag
     runs-on: ubuntu-latest
     steps:
@@ -44,7 +85,7 @@ jobs:
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
         with:
-          platforms: all
+          platforms: arm64
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -55,9 +96,10 @@ jobs:
           path: |
             ~/.cache/go-build
             /go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          key: ${{ runner.os }}-go-arm64-${{ hashFiles('**/go.sum') }}
           restore-keys: |
-                ${{ runner.os }}-go-
+            ${{ runner.os }}-go-arm64-
+            ${{ runner.os }}-go-
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
@@ -66,11 +108,36 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push Docker image
+      - name: Build and push ARM64 image
         uses: docker/build-push-action@v6
         with:
           context: .
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/arm64
           push: true
-          tags: ghcr.io/${{ github.repository_owner }}/spray:${{ needs.tag.outputs.new_version }}
+          tags: ghcr.io/${{ github.repository_owner }}/spray:${{ needs.tag.outputs.new_version }}-arm64
+          cache-from: type=gha,scope=arm64
+          cache-to: type=gha,mode=max,scope=arm64
+
+  create-manifest:
+    needs: [tag, build-amd64, build-arm64]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create and push multi-platform manifest
+        run: |
+          docker buildx imagetools create -t ghcr.io/${{ github.repository_owner }}/spray:${{ needs.tag.outputs.new_version }} \
+            ghcr.io/${{ github.repository_owner }}/spray:${{ needs.tag.outputs.new_version }}-amd64 \
+            ghcr.io/${{ github.repository_owner }}/spray:${{ needs.tag.outputs.new_version }}-arm64
+
+      - name: Create and push latest manifest
+        run: |
+          docker buildx imagetools create -t ghcr.io/${{ github.repository_owner }}/spray:latest \
+            ghcr.io/${{ github.repository_owner }}/spray:${{ needs.tag.outputs.new_version }}-amd64 \
+            ghcr.io/${{ github.repository_owner }}/spray:${{ needs.tag.outputs.new_version }}-arm64
 
