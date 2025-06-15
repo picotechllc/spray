@@ -9,10 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"cloud.google.com/go/logging"
 	"cloud.google.com/go/storage"
 	"github.com/stretchr/testify/assert"
-	"google.golang.org/api/option"
 )
 
 // Mock implementations
@@ -47,7 +45,9 @@ type mockObjectStore struct {
 // GetObject returns a mock object
 func (s *mockObjectStore) GetObject(ctx context.Context, path string) (io.ReadCloser, *storage.ObjectAttrs, error) {
 	if obj, ok := s.objects[path]; ok {
-		return io.NopCloser(strings.NewReader(string(obj.data))), &storage.ObjectAttrs{}, nil
+		return io.NopCloser(strings.NewReader(string(obj.data))), &storage.ObjectAttrs{
+			ContentType: obj.contentType,
+		}, nil
 	}
 	return nil, nil, storage.ErrObjectNotExist
 }
@@ -57,28 +57,6 @@ type errorObjectStore struct{}
 
 func (s *errorObjectStore) GetObject(ctx context.Context, path string) (io.ReadCloser, *storage.ObjectAttrs, error) {
 	return nil, nil, assert.AnError
-}
-
-// mockLogClient is a mock implementation of the LoggingClient interface
-type mockLogClient struct {
-	*logging.Client
-}
-
-// newMockLogClient creates a new mock logging client
-func newMockLogClient() *mockLogClient {
-	return &mockLogClient{}
-}
-
-// Logger returns a new logger
-func (c *mockLogClient) Logger(name string, opts ...logging.LoggerOption) *logging.Logger {
-	// Create a minimal logger that won't panic
-	logger := &logging.Logger{}
-	return logger
-}
-
-// Close closes the client
-func (c *mockLogClient) Close() error {
-	return nil
 }
 
 // mockStorageClient is a mock implementation of the StorageClient interface
@@ -125,13 +103,9 @@ func createMockServer(t *testing.T, objects map[string]mockObject, redirects map
 		objects: objects,
 	}
 
-	// Create a mock logger that won't panic
-	logger := &logging.Logger{}
-
 	return &gcsServer{
 		store:      store,
 		bucketName: "test-bucket",
-		logger:     logger,
 		redirects:  redirects,
 	}
 }
@@ -345,11 +319,7 @@ func TestCleanRequestPath(t *testing.T) {
 func TestNewGCSServer(t *testing.T) {
 	ctx := context.Background()
 
-	// Create a mock logging client
-	logClient := &mockLogClient{}
-	logger := logClient.Logger("test-logger")
-
-	server, err := newGCSServer(ctx, "test-bucket", logger, newMockStorageClient(), nil)
+	server, err := newGCSServer(ctx, "test-bucket", nil, newMockStorageClient(), nil)
 	if err != nil {
 		t.Fatalf("Failed to create GCS server: %v", err)
 	}
@@ -360,10 +330,6 @@ func TestNewGCSServer(t *testing.T) {
 
 	if server.bucketName != "test-bucket" {
 		t.Errorf("Expected bucket name %q, got %q", "test-bucket", server.bucketName)
-	}
-
-	if server.logger != logger {
-		t.Error("Expected logger to be set")
 	}
 }
 
@@ -405,12 +371,8 @@ func TestHealthCheckHandlers(t *testing.T) {
 func TestNewGCSServer_ErrorPath(t *testing.T) {
 	ctx := context.Background()
 
-	// Create a mock logging client
-	logClient := &mockLogClient{}
-	logger := logClient.Logger("test-logger")
-
 	// Test with nil storage client
-	_, err := newGCSServer(ctx, "test-bucket", logger, nil, nil)
+	_, err := newGCSServer(ctx, "test-bucket", nil, nil, nil)
 	if err != nil {
 		t.Fatalf("Expected no error with nil storage client, got: %v", err)
 	}
@@ -454,18 +416,9 @@ func TestRunServerImpl_GracefulShutdown(t *testing.T) {
 
 // Test ServeHTTP with a storage error (not ErrObjectNotExist)
 func TestServeHTTP_StorageError(t *testing.T) {
-	ctx := context.Background()
-	logClient, err := logging.NewClient(ctx, "test-project", option.WithoutAuthentication())
-	if err != nil {
-		t.Fatalf("Failed to create mock logging client: %v", err)
-	}
-	defer logClient.Close()
-	logger := logClient.Logger("test-logger")
-
 	server := &gcsServer{
 		store:      &errorObjectStore{},
 		bucketName: "test-bucket",
-		logger:     logger,
 	}
 
 	req := httptest.NewRequest("GET", "/somefile.txt", nil)

@@ -6,7 +6,6 @@ import (
 	"log"
 	"os"
 
-	"cloud.google.com/go/logging"
 	"cloud.google.com/go/storage"
 	"github.com/spf13/cobra"
 )
@@ -16,11 +15,16 @@ var storageClientFactory = func(ctx context.Context) (StorageClient, error) {
 	return storage.NewClient(ctx)
 }
 
+// loggingClientFactory is a variable that can be replaced in tests
+var loggingClientFactory = func(ctx context.Context, projectID string) (LoggingClient, error) {
+	return createLoggingClient(ctx, projectID)
+}
+
 func main() {
 	ctx := context.Background()
 
 	// Initialize logging
-	logClient, err := logging.NewClient(ctx, os.Getenv("GOOGLE_PROJECT_ID"))
+	logClient, err := loggingClientFactory(ctx, os.Getenv("GOOGLE_PROJECT_ID"))
 	if err != nil {
 		log.Fatalf("Failed to create logging client: %v", err)
 	}

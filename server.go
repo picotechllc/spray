@@ -18,11 +18,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-// ObjectStore defines the interface for storage operations
-type ObjectStore interface {
-	GetObject(ctx context.Context, path string) (io.ReadCloser, *storage.ObjectAttrs, error)
-}
-
 // GCSObjectStore implements ObjectStore using Google Cloud Storage
 type GCSObjectStore struct {
 	bucket *storage.BucketHandle
@@ -45,21 +40,15 @@ func (s *GCSObjectStore) GetObject(ctx context.Context, path string) (io.ReadClo
 	return reader, attrs, nil
 }
 
-// StorageClient defines the interface for storage operations
-type StorageClient interface {
-	Bucket(name string) *storage.BucketHandle
-	Close() error
-}
-
 type gcsServer struct {
 	store      ObjectStore
 	bucketName string
-	logger     *logging.Logger
+	logger     Logger
 	redirects  map[string]string
 }
 
 // newGCSServer creates a new GCS server
-func newGCSServer(ctx context.Context, bucketName string, logger *logging.Logger, store ObjectStore, redirects map[string]string) (*gcsServer, error) {
+func newGCSServer(ctx context.Context, bucketName string, logger Logger, store ObjectStore, redirects map[string]string) (*gcsServer, error) {
 	if store == nil {
 		return nil, fmt.Errorf("store cannot be nil")
 	}
@@ -237,7 +226,7 @@ func livezHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // createServer creates a new HTTP server with the given configuration.
-func createServer(ctx context.Context, cfg *config, logClient *logging.Client) (*http.Server, error) {
+func createServer(ctx context.Context, cfg *config, logClient LoggingClient) (*http.Server, error) {
 	logger := logClient.Logger("gcs-server")
 
 	server, err := newGCSServer(ctx, cfg.bucketName, logger, nil, nil)
@@ -279,26 +268,24 @@ var runServer = runServerImpl
 
 // runServerImpl runs the HTTP server until it is shut down.
 func runServerImpl(ctx context.Context, srv *http.Server) error {
-	serverErrors := make(chan error, 1)
+	// Start the server in a goroutine
 	go func() {
-		log.Printf("Server started on port %s", srv.Addr)
-		serverErrors <- srv.ListenAndServe()
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Printf("Error running server: %v", err)
+		}
 	}()
 
+	// Wait for shutdown signal
 	shutdown := handleSignals()
+	<-shutdown
 
-	select {
-	case err := <-serverErrors:
-		return fmt.Errorf("server error: %v", err)
-	case <-shutdown:
-		log.Println("Starting shutdown...")
+	// Create a new context with timeout for graceful shutdown
+	shutdownCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
 
-		ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		defer cancel()
-
-		if err := srv.Shutdown(ctx); err != nil {
-			return fmt.Errorf("graceful shutdown failed: %v", err)
-		}
+	// Attempt graceful shutdown
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		return fmt.Errorf("graceful shutdown failed: %v", err)
 	}
 
 	return nil

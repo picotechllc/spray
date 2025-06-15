@@ -13,12 +13,14 @@ import (
 
 // mockRedirectStore implements ObjectStore for testing redirects
 type mockRedirectStore struct {
-	objects map[string]string
+	objects map[string]mockObject
 }
 
 func (m *mockRedirectStore) GetObject(ctx context.Context, path string) (io.ReadCloser, *storage.ObjectAttrs, error) {
-	if content, exists := m.objects[path]; exists {
-		return io.NopCloser(strings.NewReader(content)), &storage.ObjectAttrs{}, nil
+	if obj, ok := m.objects[path]; ok {
+		return io.NopCloser(strings.NewReader(string(obj.data))), &storage.ObjectAttrs{
+			ContentType: obj.contentType,
+		}, nil
 	}
 	return nil, nil, storage.ErrObjectNotExist
 }
@@ -69,10 +71,13 @@ func TestLoadRedirects(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			store := &mockRedirectStore{
-				objects: make(map[string]string),
+				objects: make(map[string]mockObject),
 			}
 			if tt.configContent != "" {
-				store.objects[".spray/redirects.toml"] = tt.configContent
+				store.objects[".spray/redirects.toml"] = mockObject{
+					data:        []byte(tt.configContent),
+					contentType: "application/toml",
+				}
 			}
 
 			redirects, err := loadRedirects(context.Background(), store)

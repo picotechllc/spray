@@ -62,7 +62,7 @@ func TestGCSIntegration(t *testing.T) {
 	require.NoError(t, err, "Failed to close test object writer")
 
 	// Create the server
-	server, err := newGCSServer(ctx, bucketName, logger, client)
+	server, err := newGCSServer(ctx, bucketName, &gcpLoggerAdapter{logger: logger}, client)
 	require.NoError(t, err, "Failed to create GCS server")
 
 	// Test object retrieval

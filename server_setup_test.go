@@ -22,7 +22,11 @@ func TestServerSetup(t *testing.T) {
 	// Mock loggingClientFactory to avoid real GCP credential lookup
 	origLoggingClientFactory := loggingClientFactory
 	loggingClientFactory = func(ctx context.Context, projectID string) (LoggingClient, error) {
-		return logging.NewClient(ctx, projectID, option.WithoutAuthentication())
+		client, err := logging.NewClient(ctx, projectID, option.WithoutAuthentication())
+		if err != nil {
+			return nil, err
+		}
+		return newGCPLoggingClient(client), nil
 	}
 	defer func() { loggingClientFactory = origLoggingClientFactory }()
 
@@ -176,8 +180,8 @@ func TestSetupServer(t *testing.T) {
 				store:      newMockStorageClient(),
 			},
 			setupServer: func(ctx context.Context, cfg *config, logClient LoggingClient) (*http.Server, error) {
-				// Create a mock logger that won't panic
-				logger := &logging.Logger{}
+				// Use a mockLogger to avoid panics
+				logger := &mockLogger{}
 				server, err := newGCSServer(ctx, cfg.bucketName, logger, cfg.store, cfg.redirects)
 				if err != nil {
 					return nil, err
