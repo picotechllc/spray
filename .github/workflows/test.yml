@@ -35,6 +35,9 @@ jobs:
       - name: Run tests with coverage
         env:
           LOGGING_OFFLINE: "true"
+          GCP_PROJECT: ${{ secrets.GCP_PROJECT }}
+          TEST_BUCKET: ${{ secrets.TEST_BUCKET }}
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS }}
         run: |
           go test -race -coverprofile=coverage.out -covermode=atomic ./...
 
@@ -99,6 +102,8 @@ jobs:
       - name: Run integration tests
         env:
           TEST_BUCKET: ${{ secrets.TEST_BUCKET }}
+          GCP_PROJECT: ${{ secrets.GCP_PROJECT }}
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS }}
         run: |
           go test -v -tags=integration ./...
           echo "::notice::Integration tests completed" 
