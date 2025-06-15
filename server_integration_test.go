@@ -5,7 +5,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"testing"
 
@@ -63,7 +62,7 @@ func TestGCSIntegration(t *testing.T) {
 	require.NoError(t, err, "Failed to close test object writer")
 
 	// Create the server
-	server, err := newGCSServer(ctx, bucketName, logger)
+	server, err := newGCSServer(ctx, bucketName, logger, client)
 	require.NoError(t, err, "Failed to create GCS server")
 
 	// Test object retrieval
@@ -83,4 +82,4 @@ func TestGCSIntegration(t *testing.T) {
 	// Test non-existent object
 	_, _, err = server.store.GetObject(ctx, "nonexistent.txt")
 	assert.ErrorIs(t, err, storage.ErrObjectNotExist, "Expected ErrObjectNotExist for non-existent object")
-} 
+}
