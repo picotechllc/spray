@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"cloud.google.com/go/storage"
 	"github.com/BurntSushi/toml"
@@ -29,6 +30,18 @@ type RedirectConfig struct {
 	Redirects map[string]string `toml:"redirects"`
 }
 
+// isPermissionError checks if the error is related to permissions/access denied
+func isPermissionError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := err.Error()
+	return strings.Contains(errStr, "AccessDenied") ||
+		strings.Contains(errStr, "Access denied") ||
+		strings.Contains(errStr, "permission denied") ||
+		strings.Contains(errStr, "403")
+}
+
 // validateConfig checks if the config is valid and returns an error if not.
 func validateConfig(cfg *config) error {
 	if cfg.bucketName == "" {
@@ -47,6 +60,12 @@ func loadRedirects(ctx context.Context, store ObjectStore) (map[string]string, e
 	if err != nil {
 		if err == storage.ErrObjectNotExist {
 			// No redirects file is fine, return empty map
+			return make(map[string]string), nil
+		}
+		// Handle permission errors gracefully - redirects are optional
+		if isPermissionError(err) {
+			redirectConfigErrors.WithLabelValues("", "permission_denied").Inc()
+			fmt.Printf("Warning: Cannot access redirects file at %s due to permission error: %v\n", configPath, err)
 			return make(map[string]string), nil
 		}
 		redirectConfigErrors.WithLabelValues("", "read_error").Inc()
