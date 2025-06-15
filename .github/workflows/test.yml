@@ -17,6 +17,9 @@ jobs:
   test:
     name: Test with Coverage
     runs-on: ubuntu-latest
+    permissions:
+      contents: 'read'
+      id-token: 'write'
     steps:
       - uses: actions/checkout@v4
 
@@ -32,12 +35,31 @@ jobs:
           go clean -cache -modcache -i -r
           rm -rf ~/go/pkg/mod
 
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+          create_credentials_file: true
+          export_environment_variables: true
+          universe: googleapis.com
+          cleanup_credentials: true
+          access_token_lifetime: 3600s
+          access_token_scopes: https://www.googleapis.com/auth/cloud-platform
+          id_token_include_email: false
+          audience: https://github.com/picotechllc/spray
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ secrets.GCP_PROJECT }}
+          version: '>= 416.0.0'
+
       - name: Run tests with coverage
         env:
           LOGGING_OFFLINE: "true"
           GCP_PROJECT: ${{ secrets.GCP_PROJECT }}
           TEST_BUCKET: ${{ secrets.TEST_BUCKET }}
-          GOOGLE_APPLICATION_CREDENTIALS: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS }}
         run: |
           go test -race -coverprofile=coverage.out -covermode=atomic ./...
 
@@ -104,6 +126,7 @@ jobs:
           TEST_BUCKET: ${{ secrets.TEST_BUCKET }}
           GCP_PROJECT: ${{ secrets.GCP_PROJECT }}
           GOOGLE_APPLICATION_CREDENTIALS: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS }}
+          TESTING: "false"
         run: |
           go test -v -tags=integration ./...
           echo "::notice::Integration tests completed" 
