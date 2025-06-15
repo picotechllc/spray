@@ -20,6 +20,7 @@ type config struct {
 	port       string
 	bucketName string
 	projectID  string
+	store      ObjectStore
 	redirects  map[string]string // path -> destination URL
 }
 

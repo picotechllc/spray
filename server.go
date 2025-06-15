@@ -58,26 +58,10 @@ type gcsServer struct {
 	redirects  map[string]string
 }
 
-// newGCSServer creates a new gcsServer with the provided storage client and logger.
-func newGCSServer(ctx context.Context, bucketName string, logger *logging.Logger, storageClient StorageClient, redirects map[string]string) (*gcsServer, error) {
-	if storageClient == nil {
-		var err error
-		client, err := storage.NewClient(ctx)
-		if err != nil {
-			logger.Log(logging.Entry{
-				Severity: logging.Error,
-				Payload: map[string]any{
-					"error":     err.Error(),
-					"operation": "create_storage_client",
-				},
-			})
-			return nil, fmt.Errorf("failed to create client: %v", err)
-		}
-		storageClient = client
-	}
-
-	store := &GCSObjectStore{
-		bucket: storageClient.Bucket(bucketName),
+// newGCSServer creates a new GCS server
+func newGCSServer(ctx context.Context, bucketName string, logger *logging.Logger, store ObjectStore, redirects map[string]string) (*gcsServer, error) {
+	if store == nil {
+		return nil, fmt.Errorf("store cannot be nil")
 	}
 
 	return &gcsServer{

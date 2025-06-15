@@ -60,34 +60,57 @@ func (s *errorObjectStore) GetObject(ctx context.Context, path string) (io.ReadC
 	return nil, nil, assert.AnError
 }
 
-// Mock logging client for testing
+// mockLogClient is a mock implementation of the LoggingClient interface
 type mockLogClient struct {
 	*logging.Client
 }
 
+// newMockLogClient creates a new mock logging client
 func newMockLogClient() *mockLogClient {
 	return &mockLogClient{}
 }
 
-func (c *mockLogClient) Logger(name string) *logging.Logger {
+// Logger returns a new logger
+func (c *mockLogClient) Logger(name string, opts ...logging.LoggerOption) *logging.Logger {
 	return &logging.Logger{}
 }
 
+// Close closes the client
 func (c *mockLogClient) Close() error {
 	return nil
 }
 
-// Mock storage client for testing
-type mockStorageClient struct{}
-
-func newMockStorageClient() StorageClient {
-	return &mockStorageClient{}
+// mockStorageClient is a mock implementation of the StorageClient interface
+type mockStorageClient struct {
+	objects map[string]mockObject
 }
 
+// newMockStorageClient creates a new mock storage client
+func newMockStorageClient() *mockStorageClient {
+	return &mockStorageClient{
+		objects: make(map[string]mockObject),
+	}
+}
+
+// Bucket returns a mock bucket
 func (c *mockStorageClient) Bucket(name string) *storage.BucketHandle {
 	return &storage.BucketHandle{}
 }
 
+// GetObject returns a mock object
+func (c *mockStorageClient) GetObject(ctx context.Context, path string) (io.ReadCloser, *storage.ObjectAttrs, error) {
+	if _, ok := c.objects[path]; ok {
+		return io.NopCloser(strings.NewReader("")), &storage.ObjectAttrs{}, nil
+	}
+	return nil, nil, storage.ErrObjectNotExist
+}
+
+// ListObjects returns a mock object iterator
+func (c *mockStorageClient) ListObjects(ctx context.Context, prefix string) *storage.ObjectIterator {
+	return &storage.ObjectIterator{}
+}
+
+// Close closes the client
 func (c *mockStorageClient) Close() error {
 	return nil
 }

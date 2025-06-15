@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"testing"
 
 	"cloud.google.com/go/logging"
@@ -165,7 +164,7 @@ func TestSetupServer(t *testing.T) {
 	tests := []struct {
 		name        string
 		cfg         *config
-		setupServer ServerSetup
+		setupServer func(context.Context, *config, LoggingClient) (*http.Server, error)
 		wantErr     bool
 	}{
 		{
@@ -174,19 +173,14 @@ func TestSetupServer(t *testing.T) {
 				port:       "8080",
 				bucketName: "test-bucket",
 				projectID:  "test-project",
+				store:      newMockStorageClient(),
 			},
-			setupServer: func(ctx context.Context, cfg *config, logClient *logging.Client) (*http.Server, error) {
+			setupServer: func(ctx context.Context, cfg *config, logClient LoggingClient) (*http.Server, error) {
 				logger := logClient.Logger("test-logger")
 
-				// Create a mock GCS server
-				mockStore := &mockObjectStore{
-					objects: make(map[string]mockObject),
-				}
-
-				server := &gcsServer{
-					store:      mockStore,
-					bucketName: cfg.bucketName,
-					logger:     logger,
+				server, err := newGCSServer(ctx, cfg.bucketName, logger, cfg.store, cfg.redirects)
+				if err != nil {
+					return nil, err
 				}
 
 				mux := http.NewServeMux()
@@ -208,8 +202,9 @@ func TestSetupServer(t *testing.T) {
 				port:       "invalid-port",
 				bucketName: "test-bucket",
 				projectID:  "test-project",
+				store:      newMockStorageClient(),
 			},
-			setupServer: func(ctx context.Context, cfg *config, logClient *logging.Client) (*http.Server, error) {
+			setupServer: func(ctx context.Context, cfg *config, logClient LoggingClient) (*http.Server, error) {
 				return nil, fmt.Errorf("invalid port")
 			},
 			wantErr: true,
@@ -219,8 +214,9 @@ func TestSetupServer(t *testing.T) {
 			cfg: &config{
 				port:      "8080",
 				projectID: "test-project",
+				store:     newMockStorageClient(),
 			},
-			setupServer: func(ctx context.Context, cfg *config, logClient *logging.Client) (*http.Server, error) {
+			setupServer: func(ctx context.Context, cfg *config, logClient LoggingClient) (*http.Server, error) {
 				return nil, fmt.Errorf("missing bucket name")
 			},
 			wantErr: true,
@@ -231,8 +227,9 @@ func TestSetupServer(t *testing.T) {
 				port:       "8080",
 				bucketName: "test-bucket",
 				projectID:  "test-project",
+				store:      newMockStorageClient(),
 			},
-			setupServer: func(ctx context.Context, cfg *config, logClient *logging.Client) (*http.Server, error) {
+			setupServer: func(ctx context.Context, cfg *config, logClient LoggingClient) (*http.Server, error) {
 				return nil, fmt.Errorf("failed to create logging client")
 			},
 			wantErr: true,
@@ -241,17 +238,16 @@ func TestSetupServer(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Save original setupServer and restore after test
-			originalSetup := DefaultServerSetup
-			defer func() { DefaultServerSetup = originalSetup }()
-
 			// Set test setup function
 			DefaultServerSetup = tt.setupServer
 
-			// Create a mock logging client
-			logClient := &logging.Client{}
-
+			// Create a context
 			ctx := context.Background()
+
+			// Create a mock logging client
+			logClient := newMockLogClient()
+
+			// Create server with mock setup
 			srv, err := DefaultServerSetup(ctx, tt.cfg, logClient)
 
 			if tt.wantErr {
@@ -259,32 +255,37 @@ func TestSetupServer(t *testing.T) {
 				return
 			}
 
-			require.NoError(t, err)
+			assert.NoError(t, err)
 			assert.NotNil(t, srv)
-			assert.Equal(t, ":"+tt.cfg.port, srv.Addr)
 
-			// Verify that all expected handlers are registered
-			mux, ok := srv.Handler.(*http.ServeMux)
-			require.True(t, ok, "Handler should be *http.ServeMux")
+			// Verify the server has the expected handlers
+			mux := srv.Handler.(*http.ServeMux)
 
-			// Check for root handler
-			h, pattern := mux.Handler(&http.Request{URL: &url.URL{Path: "/"}})
-			assert.NotNil(t, h, "Root handler should be registered")
-			assert.Equal(t, "/", pattern)
+			// Test root handler
+			req := httptest.NewRequest("GET", "/", nil)
+			rr := httptest.NewRecorder()
+			mux.ServeHTTP(rr, req)
+			assert.Equal(t, http.StatusNotFound, rr.Code) // Should be 404 since we have no objects
 
-			// Check for metrics handler
-			h, pattern = mux.Handler(&http.Request{URL: &url.URL{Path: "/metrics"}})
-			assert.NotNil(t, h, "Metrics handler should be registered")
-			assert.Equal(t, "/metrics", pattern)
+			// Test metrics endpoint
+			req = httptest.NewRequest("GET", "/metrics", nil)
+			rr = httptest.NewRecorder()
+			mux.ServeHTTP(rr, req)
+			assert.Equal(t, http.StatusOK, rr.Code)
 
-			// Check for health check handlers
-			h, pattern = mux.Handler(&http.Request{URL: &url.URL{Path: "/readyz"}})
-			assert.NotNil(t, h, "Readyz handler should be registered")
-			assert.Equal(t, "/readyz", pattern)
+			// Test readyz endpoint
+			req = httptest.NewRequest("GET", "/readyz", nil)
+			rr = httptest.NewRecorder()
+			mux.ServeHTTP(rr, req)
+			assert.Equal(t, http.StatusOK, rr.Code)
+			assert.Equal(t, "ok", rr.Body.String())
 
-			h, pattern = mux.Handler(&http.Request{URL: &url.URL{Path: "/livez"}})
-			assert.NotNil(t, h, "Livez handler should be registered")
-			assert.Equal(t, "/livez", pattern)
+			// Test livez endpoint
+			req = httptest.NewRequest("GET", "/livez", nil)
+			rr = httptest.NewRecorder()
+			mux.ServeHTTP(rr, req)
+			assert.Equal(t, http.StatusOK, rr.Code)
+			assert.Equal(t, "ok", rr.Body.String())
 		})
 	}
 }

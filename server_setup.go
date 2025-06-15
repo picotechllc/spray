@@ -9,14 +9,14 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-// LoggingClient defines the interface for logging operations
+// LoggingClient is an interface for logging clients
 type LoggingClient interface {
-	Logger(name string) *logging.Logger
+	Logger(name string, opts ...logging.LoggerOption) *logging.Logger
 	Close() error
 }
 
-// ServerSetup is a function type for setting up the server
-type ServerSetup func(ctx context.Context, cfg *config, logClient LoggingClient) (*http.Server, error)
+// ServerSetup is a function type that sets up the server
+type ServerSetup = func(context.Context, *config, LoggingClient) (*http.Server, error)
 
 // defaultServerSetup creates a new server with default configuration
 func defaultServerSetup(ctx context.Context, cfg *config, logClient LoggingClient) (*http.Server, error) {
@@ -43,11 +43,13 @@ func defaultServerSetup(ctx context.Context, cfg *config, logClient LoggingClien
 var DefaultServerSetup ServerSetup = func(ctx context.Context, cfg *config, logClient LoggingClient) (*http.Server, error) {
 	logger := logClient.Logger("gcs-server")
 
-	server, err := newGCSServer(ctx, cfg.bucketName, logger, nil, cfg.redirects)
+	// Create a new GCS server
+	server, err := newGCSServer(ctx, cfg.bucketName, logger, cfg.store, cfg.redirects)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create GCS server: %v", err)
 	}
 
+	// Set up HTTP handlers
 	mux := http.NewServeMux()
 	mux.Handle("/", server)
 	mux.Handle("/metrics", promhttp.Handler())
