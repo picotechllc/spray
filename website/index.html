@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Spray - GCS Static File Server</title>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💧</text></svg>">
+</head>
+<body>
+    <header class="header">
+        <nav class="nav">
+            <div class="nav-brand">
+                <span class="logo">💧</span>
+                <span class="brand-name">Spray</span>
+            </div>
+            <div class="nav-links">
+                <a href="#features">Features</a>
+                <a href="#getting-started">Getting Started</a>
+                <a href="#documentation">Documentation</a>
+                <a href="https://github.com/picotechllc/spray" target="_blank" class="github-link">GitHub</a>
+            </div>
+        </nav>
+    </header>
+
+    <main>
+        <section class="hero">
+            <div class="hero-content">
+                <h1 class="hero-title">
+                    <span class="gradient-text">Spray</span>
+                    <span class="subtitle">Minimal GCS Static File Server</span>
+                </h1>
+                <p class="hero-description">
+                    A lightweight, production-ready Go web server that serves static files directly from Google Cloud Storage buckets. 
+                    Simple to deploy, easy to configure, and built for performance.
+                </p>
+                <div class="hero-actions">
+                    <a href="#getting-started" class="btn btn-primary">Get Started</a>
+                    <a href="https://github.com/picotechllc/spray" class="btn btn-secondary" target="_blank">View on GitHub</a>
+                </div>
+            </div>
+            <div class="hero-visual">
+                <div class="code-preview">
+                    <div class="code-header">
+                        <div class="code-dots">
+                            <span></span>
+                            <span></span>
+                            <span></span>
+                        </div>
+                        <span class="code-title">Deploy with Docker</span>
+                    </div>
+                    <div class="code-content">
+                        <pre><code><span class="code-comment"># Build the image</span>
+<span class="code-keyword">docker</span> build -t spray .
+
+<span class="code-comment"># Run with your GCS bucket</span>
+<span class="code-keyword">docker</span> run -e <span class="code-string">BUCKET_NAME</span>=my-bucket \
+  -p 8080:8080 spray</code></pre>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section id="features" class="section">
+            <div class="container">
+                <h2 class="section-title">Why Choose Spray?</h2>
+                <div class="features-grid">
+                    <div class="feature-card">
+                        <div class="feature-icon">⚡</div>
+                        <h3>Lightning Fast</h3>
+                        <p>Minimal overhead with direct GCS integration. Serve your static files with blazing speed and low latency.</p>
+                    </div>
+                    <div class="feature-card">
+                        <div class="feature-icon">📊</div>
+                        <h3>Production Metrics</h3>
+                        <p>Comprehensive Prometheus metrics for monitoring request volume, latency, errors, and GCS operation performance.</p>
+                    </div>
+                    <div class="feature-card">
+                        <div class="feature-icon">🔄</div>
+                        <h3>Smart Redirects</h3>
+                        <p>Configure custom redirects with a simple TOML file. Perfect for URL migrations and traffic routing.</p>
+                    </div>
+                    <div class="feature-card">
+                        <div class="feature-icon">🛡️</div>
+                        <h3>Built-in Security</h3>
+                        <p>Path traversal protection, proper error handling, and secure defaults out of the box.</p>
+                    </div>
+                    <div class="feature-card">
+                        <div class="feature-icon">🔍</div>
+                        <h3>Health Checks</h3>
+                        <p>Ready-made health check endpoints for Kubernetes and other orchestration platforms.</p>
+                    </div>
+                    <div class="feature-card">
+                        <div class="feature-icon">⚙️</div>
+                        <h3>Easy Configuration</h3>
+                        <p>Simple environment variable configuration. No complex setup required.</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section id="getting-started" class="section section-dark">
+            <div class="container">
+                <h2 class="section-title">Getting Started</h2>
+                <div class="getting-started-content">
+                    <div class="step">
+                        <div class="step-number">1</div>
+                        <div class="step-content">
+                            <h3>Set Environment Variables</h3>
+                            <p>Configure your GCS bucket and Google Cloud project:</p>
+                            <div class="code-block">
+                                <pre><code>export BUCKET_NAME=my-static-site
+export GOOGLE_PROJECT_ID=my-project
+export PORT=8080  # Optional, defaults to 8080</code></pre>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="step">
+                        <div class="step-number">2</div>
+                        <div class="step-content">
+                            <h3>Deploy with Docker</h3>
+                            <p>The easiest way to get started:</p>
+                            <div class="code-block">
+                                <pre><code>docker run -e BUCKET_NAME=my-bucket \
+  -e GOOGLE_PROJECT_ID=my-project \
+  -p 8080:8080 \
+  ghcr.io/picotechllc/spray:latest</code></pre>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="step">
+                        <div class="step-number">3</div>
+                        <div class="step-content">
+                            <h3>Or Build from Source</h3>
+                            <p>Build and run locally:</p>
+                            <div class="code-block">
+                                <pre><code>git clone https://github.com/picotechllc/spray.git
+cd spray
+go build
+./spray</code></pre>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section id="documentation" class="section">
+            <div class="container">
+                <h2 class="section-title">Documentation</h2>
+                <div class="docs-grid">
+                    <div class="doc-card">
+                        <h3>📝 Configuration</h3>
+                        <p>Learn how to configure Spray with environment variables and redirect files.</p>
+                        <ul>
+                            <li>Environment variables</li>
+                            <li>Custom redirects with TOML</li>
+                            <li>Port configuration</li>
+                        </ul>
+                    </div>
+                    <div class="doc-card">
+                        <h3>📈 Metrics & Monitoring</h3>
+                        <p>Comprehensive metrics for production monitoring and observability.</p>
+                        <ul>
+                            <li>Prometheus metrics at <code>/metrics</code></li>
+                            <li>Request volume and latency</li>
+                            <li>Error tracking and GCS performance</li>
+                        </ul>
+                    </div>
+                    <div class="doc-card">
+                        <h3>🚀 Deployment</h3>
+                        <p>Deploy Spray to various platforms and environments.</p>
+                        <ul>
+                            <li>Docker deployment</li>
+                            <li>Kubernetes configurations</li>
+                            <li>GCP Cloud Run</li>
+                        </ul>
+                    </div>
+                </div>
+                <div class="endpoints-section">
+                    <h3>Available Endpoints</h3>
+                    <div class="endpoints-list">
+                        <div class="endpoint">
+                            <span class="endpoint-method">GET</span>
+                            <span class="endpoint-path">/</span>
+                            <span class="endpoint-desc">Serves static files from GCS bucket</span>
+                        </div>
+                        <div class="endpoint">
+                            <span class="endpoint-method">GET</span>
+                            <span class="endpoint-path">/metrics</span>
+                            <span class="endpoint-desc">Prometheus metrics endpoint</span>
+                        </div>
+                        <div class="endpoint">
+                            <span class="endpoint-method">GET</span>
+                            <span class="endpoint-path">/readyz</span>
+                            <span class="endpoint-desc">Readiness probe endpoint</span>
+                        </div>
+                        <div class="endpoint">
+                            <span class="endpoint-method">GET</span>
+                            <span class="endpoint-path">/livez</span>
+                            <span class="endpoint-desc">Liveness probe endpoint</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer class="footer">
+        <div class="container">
+            <div class="footer-content">
+                <div class="footer-brand">
+                    <span class="logo">💧</span>
+                    <span class="brand-name">Spray</span>
+                </div>
+                <div class="footer-links">
+                    <a href="https://github.com/picotechllc/spray" target="_blank">GitHub</a>
+                    <a href="https://github.com/picotechllc/spray/issues" target="_blank">Issues</a>
+                    <a href="https://github.com/picotechllc/spray/blob/main/LICENSE.md" target="_blank">License</a>
+                </div>
+            </div>
+            <div class="footer-bottom">
+                <p>&copy; 2024 Spray. Licensed under the MIT License.</p>
+            </div>
+        </div>
+    </footer>
+</body>
+</html> 

@@ -98,6 +98,17 @@ This project is licensed under the MIT License. See the [LICENSE](LICENSE.md) fi
 
 Contributions are welcome! Please open an issue or submit a pull request.
 
+## Website
+
+The Spray project includes a website that explains the project and demonstrates its capabilities. The website is hosted using Spray itself at [spray.picote.ch](https://spray.picote.ch).
+
+### Directory Structure
+
+- `website/` - Static website content (HTML, CSS)
+- `deployment/` - Deployment scripts and documentation for the website
+
+To deploy the website, see the documentation in the `deployment/` directory.
+
 ## Contact
 
 For any questions or suggestions, please avail yourself of the GitHub Issues system.
