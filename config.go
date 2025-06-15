@@ -2,11 +2,14 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"log"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"cloud.google.com/go/storage"
 	"github.com/BurntSushi/toml"
@@ -53,6 +56,31 @@ func validateConfig(cfg *config) error {
 	return nil
 }
 
+// logStructuredWarning logs a structured warning message to stderr in JSON format
+func logStructuredWarning(operation, path string, err error) {
+	warning := map[string]any{
+		"timestamp": time.Now().UTC().Format(time.RFC3339),
+		"severity":  "WARNING",
+		"operation": operation,
+		"path":      path,
+		"message":   fmt.Sprintf("Cannot access %s due to permission error", path),
+	}
+
+	if err != nil {
+		warning["error"] = err.Error()
+		warning["error_type"] = "permission_denied"
+	}
+
+	// Log to stderr in JSON format for consistency
+	jsonBytes, jsonErr := json.Marshal(warning)
+	if jsonErr != nil {
+		// Fallback to simple log if JSON marshaling fails
+		log.Printf("Warning: Cannot access %s due to permission error: %v", path, err)
+	} else {
+		fmt.Fprintf(os.Stderr, "%s\n", string(jsonBytes))
+	}
+}
+
 // loadRedirects loads redirects from a redirects.toml file in the .spray directory
 func loadRedirects(ctx context.Context, store ObjectStore) (map[string]string, error) {
 	configPath := filepath.Join(configDir, redirectsFile)
@@ -65,7 +93,7 @@ func loadRedirects(ctx context.Context, store ObjectStore) (map[string]string, e
 		// Handle permission errors gracefully - redirects are optional
 		if isPermissionError(err) {
 			redirectConfigErrors.WithLabelValues("", "permission_denied").Inc()
-			fmt.Printf("Warning: Cannot access redirects file at %s due to permission error: %v\n", configPath, err)
+			logStructuredWarning("load_redirects", configPath, err)
 			return make(map[string]string), nil
 		}
 		redirectConfigErrors.WithLabelValues("", "read_error").Inc()

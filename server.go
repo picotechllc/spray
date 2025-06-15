@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -108,6 +109,115 @@ func cleanRequestPath(path string) (string, error) {
 	return cleanPath, nil
 }
 
+// errorResponse represents a structured error response
+type errorResponse struct {
+	Error   string `json:"error"`
+	Message string `json:"message"`
+	Status  int    `json:"status"`
+}
+
+// logError logs an error with structured JSON format
+func (s *gcsServer) logError(severity logging.Severity, operation, path string, statusCode int, err error) {
+	payload := map[string]any{
+		"timestamp": time.Now().UTC().Format(time.RFC3339),
+		"operation": operation,
+		"path":      path,
+		"status":    statusCode,
+		"bucket":    s.bucketName,
+	}
+
+	if err != nil {
+		payload["error"] = err.Error()
+		payload["error_type"] = getErrorType(err)
+	}
+
+	entry := logging.Entry{
+		Severity: severity,
+		Payload:  payload,
+	}
+
+	s.logger.Log(entry)
+}
+
+// logInfo logs an info message with structured JSON format
+func (s *gcsServer) logInfo(operation, path string, extra map[string]any) {
+	payload := map[string]any{
+		"timestamp": time.Now().UTC().Format(time.RFC3339),
+		"operation": operation,
+		"path":      path,
+		"bucket":    s.bucketName,
+	}
+
+	// Add extra fields
+	for k, v := range extra {
+		payload[k] = v
+	}
+
+	entry := logging.Entry{
+		Severity: logging.Info,
+		Payload:  payload,
+	}
+
+	s.logger.Log(entry)
+}
+
+// getErrorType categorizes errors for metrics and logging
+func getErrorType(err error) string {
+	if err == nil {
+		return "none"
+	}
+
+	errStr := err.Error()
+	switch {
+	case err == storage.ErrObjectNotExist:
+		return "object_not_found"
+	case isPermissionError(err):
+		return "permission_denied"
+	case strings.Contains(errStr, "timeout"):
+		return "timeout"
+	case strings.Contains(errStr, "connection"):
+		return "connection_error"
+	default:
+		return "storage_error"
+	}
+}
+
+// sendUserFriendlyError sends a user-friendly error response while logging the detailed error
+func (s *gcsServer) sendUserFriendlyError(w http.ResponseWriter, r *http.Request, path string, statusCode int, userMessage string, actualError error) {
+	// Log the detailed error for debugging
+	var severity logging.Severity
+	switch statusCode {
+	case http.StatusNotFound:
+		severity = logging.Warning
+	case http.StatusInternalServerError, http.StatusForbidden:
+		severity = logging.Error
+	default:
+		severity = logging.Info
+	}
+
+	s.logError(severity, "serve_request", path, statusCode, actualError)
+
+	// Update metrics
+	errorType := getErrorType(actualError)
+	errorTotal.WithLabelValues(s.bucketName, path, errorType).Inc()
+	requestsTotal.WithLabelValues(s.bucketName, path, r.Method, fmt.Sprintf("%d", statusCode)).Inc()
+
+	// Send user-friendly response
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(statusCode)
+
+	response := errorResponse{
+		Error:   http.StatusText(statusCode),
+		Message: userMessage,
+		Status:  statusCode,
+	}
+
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		// Fallback to plain text if JSON encoding fails
+		http.Error(w, userMessage, statusCode)
+	}
+}
+
 func (s *gcsServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	ctx := r.Context()
@@ -118,30 +228,19 @@ func (s *gcsServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	cleanPath, err := cleanRequestPath(r.URL.Path)
 	if err != nil {
-		s.logger.Log(logging.Entry{
-			Severity: logging.Error,
-			Payload: map[string]any{
-				"error":     err.Error(),
-				"path":      r.URL.Path,
-				"operation": "clean_path",
-			},
-		})
-		errorTotal.WithLabelValues(s.bucketName, r.URL.Path, "invalid_path").Inc()
-		requestsTotal.WithLabelValues(s.bucketName, r.URL.Path, r.Method, "400").Inc()
-		http.Error(w, "Invalid path", http.StatusBadRequest)
+		s.sendUserFriendlyError(
+			w, r, r.URL.Path, http.StatusBadRequest,
+			"The requested path is invalid.",
+			err,
+		)
 		return
 	}
 
 	// Check for redirects
 	if destination, exists := s.redirects[cleanPath]; exists {
 		redirectStart := time.Now()
-		s.logger.Log(logging.Entry{
-			Severity: logging.Info,
-			Payload: map[string]any{
-				"path":        cleanPath,
-				"destination": destination,
-				"operation":   "redirect",
-			},
+		s.logInfo("redirect", cleanPath, map[string]any{
+			"destination": destination,
 		})
 		requestsTotal.WithLabelValues(s.bucketName, cleanPath, r.Method, "302").Inc()
 		redirectHits.WithLabelValues(s.bucketName, cleanPath, destination).Inc()
@@ -157,32 +256,29 @@ func (s *gcsServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if err != nil {
 		if err == storage.ErrObjectNotExist {
-			s.logger.Log(logging.Entry{
-				Severity: logging.Warning,
-				Payload: map[string]any{
-					"error":     err.Error(),
-					"path":      cleanPath,
-					"operation": "get_object",
-					"status":    http.StatusNotFound,
-				},
-			})
-			errorTotal.WithLabelValues(s.bucketName, cleanPath, "object_not_found").Inc()
-			requestsTotal.WithLabelValues(s.bucketName, cleanPath, r.Method, "404").Inc()
-			http.NotFound(w, r)
+			s.sendUserFriendlyError(
+				w, r, cleanPath, http.StatusNotFound,
+				"The requested resource was not found.",
+				err,
+			)
 			return
 		}
-		s.logger.Log(logging.Entry{
-			Severity: logging.Error,
-			Payload: map[string]any{
-				"error":     err.Error(),
-				"path":      cleanPath,
-				"operation": "get_object",
-				"status":    http.StatusInternalServerError,
-			},
-		})
-		errorTotal.WithLabelValues(s.bucketName, cleanPath, "storage_error").Inc()
-		requestsTotal.WithLabelValues(s.bucketName, cleanPath, r.Method, "500").Inc()
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+
+		if isPermissionError(err) {
+			s.sendUserFriendlyError(
+				w, r, cleanPath, http.StatusForbidden,
+				"Access to this resource is not available at the moment. Please try again later.",
+				err,
+			)
+			return
+		}
+
+		// For any other storage error
+		s.sendUserFriendlyError(
+			w, r, cleanPath, http.StatusInternalServerError,
+			"The service is temporarily unavailable. Please try again later.",
+			err,
+		)
 		return
 	}
 	defer reader.Close()
@@ -195,19 +291,20 @@ func (s *gcsServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Copy the object contents to the response while tracking bytes transferred
 	written, err := io.Copy(w, reader)
 	if err != nil {
-		s.logger.Log(logging.Entry{
-			Severity: logging.Error,
-			Payload: map[string]any{
-				"error":     err.Error(),
-				"path":      cleanPath,
-				"operation": "copy_contents",
-			},
-		})
+		s.logError(logging.Error, "copy_contents", cleanPath, http.StatusInternalServerError, err)
 		errorTotal.WithLabelValues(s.bucketName, cleanPath, "copy_error").Inc()
 		requestsTotal.WithLabelValues(s.bucketName, cleanPath, r.Method, "500").Inc()
 	} else {
 		requestsTotal.WithLabelValues(s.bucketName, cleanPath, r.Method, "200").Inc()
 		bytesTransferred.WithLabelValues(s.bucketName, cleanPath, r.Method, "download").Add(float64(written))
+
+		// Log successful request
+		s.logInfo("serve_request", cleanPath, map[string]any{
+			"status":       200,
+			"bytes_served": written,
+			"content_type": attrs.ContentType,
+			"duration_ms":  time.Since(start).Milliseconds(),
+		})
 	}
 
 	// Record request duration
