@@ -9,9 +9,9 @@ import (
 
 // createLoggingClient creates a new logging client.
 func createLoggingClient(ctx context.Context, projectID string) (LoggingClient, error) {
-	// Check if we're running in a test environment
-	if os.Getenv("GOOGLE_APPLICATION_CREDENTIALS") == "" && os.Getenv("GCP_PROJECT") == "" {
-		// In test environment, return a mock LoggingClient
+	// Check if we're running in a test environment or offline mode
+	if os.Getenv("LOGGING_OFFLINE") == "true" || (os.Getenv("GOOGLE_APPLICATION_CREDENTIALS") == "" && os.Getenv("GCP_PROJECT") == "") {
+		// In test environment or offline mode, return a mock LoggingClient
 		return newMockLogClient(), nil
 	}
 
