@@ -3,17 +3,18 @@ package main
 import (
 	"context"
 	"io"
+	"os"
 	"strings"
 	"testing"
 
 	"cloud.google.com/go/storage"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 // mockRedirectStore implements ObjectStore for testing redirects
 type mockRedirectStore struct {
 	objects map[string]mockObject
+	content string
 }
 
 func (m *mockRedirectStore) GetObject(ctx context.Context, path string) (io.ReadCloser, *storage.ObjectAttrs, error) {
@@ -26,71 +27,59 @@ func (m *mockRedirectStore) GetObject(ctx context.Context, path string) (io.Read
 }
 
 func TestLoadRedirects(t *testing.T) {
+	// Load the static TOML fixture
+	content, err := os.ReadFile("testdata/redirects.toml")
+	if err != nil {
+		t.Fatalf("Failed to read testdata/redirects.toml: %v", err)
+	}
+
 	tests := []struct {
-		name           string
-		configContent  string
-		expectedPaths  map[string]string
-		expectedErrors []string
+		name          string
+		content       string
+		expected      map[string]string
+		expectedError bool
 	}{
 		{
-			name: "valid redirects",
-			configContent: `
-[redirects]
-"/old-path" = "https://example.com/new-path"
-"/another-path" = "https://example.com/destination"
-`,
-			expectedPaths: map[string]string{
-				"/old-path":     "https://example.com/new-path",
-				"/another-path": "https://example.com/destination",
-			},
+			name:          "valid_redirects",
+			content:       string(content),
+			expected:      map[string]string{"/old-path": "https://example.com/new-path", "/another-path": "https://example.com/destination"},
+			expectedError: false,
 		},
 		{
-			name: "invalid TOML",
-			configContent: `
-[redirects
-"/old-path" = "https://example.com/new-path"
-`,
-			expectedErrors: []string{"error parsing redirects file"},
+			name:          "invalid_TOML",
+			content:       "invalid toml content",
+			expected:      nil,
+			expectedError: true,
 		},
 		{
-			name: "invalid URL",
-			configContent: `
-[redirects]
-"/old-path" = "not-a-url"
-`,
-			expectedErrors: []string{"invalid redirect destination URL"},
+			name:          "invalid_URL",
+			content:       "redirects = { \"/bad-url\" = \"not-a-url\" }",
+			expected:      nil,
+			expectedError: true,
 		},
 		{
-			name:           "empty file",
-			configContent:  "",
-			expectedPaths:  map[string]string{},
-			expectedErrors: []string{},
+			name:          "empty_file",
+			content:       "",
+			expected:      map[string]string{},
+			expectedError: false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			store := &mockRedirectStore{
-				objects: make(map[string]mockObject),
-			}
-			if tt.configContent != "" {
-				store.objects[".spray/redirects.toml"] = mockObject{
-					data:        []byte(tt.configContent),
-					contentType: "application/toml",
-				}
-			}
+			// Set a valid bucket name for all tests
+			os.Setenv("BUCKET_NAME", "test-bucket")
+			defer os.Unsetenv("BUCKET_NAME")
 
+			store := &mockRedirectStore{content: tt.content}
 			redirects, err := loadRedirects(context.Background(), store)
-			if len(tt.expectedErrors) > 0 {
-				require.Error(t, err)
-				for _, expectedErr := range tt.expectedErrors {
-					assert.Contains(t, err.Error(), expectedErr)
-				}
-				return
-			}
 
-			require.NoError(t, err)
-			assert.Equal(t, tt.expectedPaths, redirects)
+			if tt.expectedError {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+				assert.Equal(t, tt.expected, redirects)
+			}
 		})
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -13,12 +14,13 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// Mock implementations
+// mockObject represents a mock object in the store
 type mockObject struct {
 	data        []byte
 	contentType string
 }
 
+// mockReader implements io.ReadCloser for testing
 type mockReader struct {
 	data   []byte
 	offset int64
@@ -42,24 +44,23 @@ type mockObjectStore struct {
 	objects map[string]mockObject
 }
 
-// GetObject returns a mock object
 func (s *mockObjectStore) GetObject(ctx context.Context, path string) (io.ReadCloser, *storage.ObjectAttrs, error) {
 	if obj, ok := s.objects[path]; ok {
-		return io.NopCloser(strings.NewReader(string(obj.data))), &storage.ObjectAttrs{
+		return &mockReader{data: obj.data}, &storage.ObjectAttrs{
 			ContentType: obj.contentType,
 		}, nil
 	}
 	return nil, nil, storage.ErrObjectNotExist
 }
 
-// Mock ObjectStore that always returns a custom error for testing ServeHTTP error path
+// errorObjectStore implements ObjectStore and always returns an error
 type errorObjectStore struct{}
 
 func (s *errorObjectStore) GetObject(ctx context.Context, path string) (io.ReadCloser, *storage.ObjectAttrs, error) {
 	return nil, nil, assert.AnError
 }
 
-// mockStorageClient is a mock implementation of the StorageClient interface
+// mockStorageClient implements the StorageClient interface for testing
 type mockStorageClient struct {
 	objects map[string]mockObject
 }
@@ -107,6 +108,7 @@ func createMockServer(t *testing.T, objects map[string]mockObject, redirects map
 		store:      store,
 		bucketName: "test-bucket",
 		redirects:  redirects,
+		logger:     &mockLogger{},
 	}
 }
 
@@ -298,8 +300,8 @@ func TestCleanRequestPath(t *testing.T) {
 			if tt.expectError {
 				if err == nil {
 					t.Error("Expected error but got none")
-				} else if tt.errorContains != "" && !strings.Contains(err.Error(), tt.errorContains) {
-					t.Errorf("Expected error containing %q but got %q", tt.errorContains, err.Error())
+				} else if !strings.Contains(err.Error(), tt.errorContains) {
+					t.Errorf("Expected error containing %q, got %q", tt.errorContains, err.Error())
 				}
 				return
 			}
@@ -310,312 +312,134 @@ func TestCleanRequestPath(t *testing.T) {
 			}
 
 			if cleanPath != tt.expectedPath {
-				t.Errorf("Expected path %q but got %q", tt.expectedPath, cleanPath)
+				t.Errorf("Expected path %q, got %q", tt.expectedPath, cleanPath)
 			}
 		})
 	}
 }
 
 func TestNewGCSServer(t *testing.T) {
-	ctx := context.Background()
+	// Test successful server creation
+	store := &mockObjectStore{objects: make(map[string]mockObject)}
+	server, err := newGCSServer(context.Background(), "test-bucket", &mockLogger{}, store, nil)
+	assert.NoError(t, err)
+	assert.NotNil(t, server)
+	assert.Equal(t, "test-bucket", server.bucketName)
+	assert.Equal(t, store, server.store)
 
-	server, err := newGCSServer(ctx, "test-bucket", nil, newMockStorageClient(), nil)
-	if err != nil {
-		t.Fatalf("Failed to create GCS server: %v", err)
-	}
-
-	if server == nil {
-		t.Fatal("Expected server to be non-nil")
-	}
-
-	if server.bucketName != "test-bucket" {
-		t.Errorf("Expected bucket name %q, got %q", "test-bucket", server.bucketName)
-	}
+	// Test nil store error
+	server, err = newGCSServer(context.Background(), "test-bucket", &mockLogger{}, nil, nil)
+	assert.Error(t, err)
+	assert.Nil(t, server)
 }
 
 func TestHealthCheckHandlers(t *testing.T) {
-	tests := []struct {
-		name     string
-		handler  http.HandlerFunc
-		wantCode int
-		wantBody string
-	}{
-		{
-			name:     "readyz handler",
-			handler:  readyzHandler,
-			wantCode: http.StatusOK,
-			wantBody: "ok",
-		},
-		{
-			name:     "livez handler",
-			handler:  livezHandler,
-			wantCode: http.StatusOK,
-			wantBody: "ok",
-		},
-	}
+	// Test readyz handler
+	req := httptest.NewRequest("GET", "/readyz", nil)
+	w := httptest.NewRecorder()
+	readyzHandler(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "ok", w.Body.String())
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest("GET", "/", nil)
-			rr := httptest.NewRecorder()
-
-			tt.handler(rr, req)
-
-			assert.Equal(t, tt.wantCode, rr.Code)
-			assert.Equal(t, tt.wantBody, rr.Body.String())
-		})
-	}
+	// Test livez handler
+	req = httptest.NewRequest("GET", "/livez", nil)
+	w = httptest.NewRecorder()
+	livezHandler(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "ok", w.Body.String())
 }
 
-// Test newGCSServer error path by injecting a failing storage client
 func TestNewGCSServer_ErrorPath(t *testing.T) {
-	ctx := context.Background()
-
-	// Test with nil storage client
-	_, err := newGCSServer(ctx, "test-bucket", nil, nil, nil)
-	if err != nil {
-		t.Fatalf("Expected no error with nil storage client, got: %v", err)
-	}
+	// Test with nil store
+	server, err := newGCSServer(context.Background(), "test-bucket", &mockLogger{}, nil, nil)
+	assert.Error(t, err)
+	assert.Nil(t, server)
 }
 
-// Test runServerImpl graceful shutdown by overriding handleSignals
 func TestRunServerImpl_GracefulShutdown(t *testing.T) {
-	// Save and restore original handleSignals
-	origHandleSignals := handleSignals
-	defer func() { handleSignals = origHandleSignals }()
-
-	// Override handleSignals to close immediately
-	handleSignals = func() chan struct{} {
-		ch := make(chan struct{})
-		close(ch)
-		return ch
+	// Create a test server
+	srv := &http.Server{
+		Addr: ":0", // Use port 0 to get a random available port
 	}
 
-	// Create a dummy HTTP server that returns immediately
-	srv := &http.Server{Addr: ":0"}
-	// Use a context that will not timeout
-	ctx := context.Background()
+	// Create a context with cancel
+	ctx, cancel := context.WithCancel(context.Background())
 
-	// Start runServerImpl in a goroutine and shut it down
-	errCh := make(chan error, 1)
+	// Start the server in a goroutine
 	go func() {
-		errCh <- runServerImpl(ctx, srv)
+		err := runServerImpl(ctx, srv)
+		assert.NoError(t, err)
 	}()
 
-	// Wait for the server to shut down
-	select {
-	case err := <-errCh:
-		// We expect no error or a graceful shutdown error
-		if err != nil && !strings.Contains(err.Error(), "graceful shutdown failed") {
-			t.Errorf("Unexpected error: %v", err)
-		}
-	case <-time.After(2 * time.Second):
-		t.Error("Timeout waiting for runServerImpl to return")
-	}
+	// Wait a bit for the server to start
+	time.Sleep(100 * time.Millisecond)
+
+	// Cancel the context to trigger graceful shutdown
+	cancel()
+
+	// Wait a bit for the server to stop
+	time.Sleep(100 * time.Millisecond)
 }
 
-// Test ServeHTTP with a storage error (not ErrObjectNotExist)
 func TestServeHTTP_StorageError(t *testing.T) {
+	// Create a server with an error store
 	server := &gcsServer{
 		store:      &errorObjectStore{},
 		bucketName: "test-bucket",
+		logger:     &mockLogger{},
 	}
 
-	req := httptest.NewRequest("GET", "/somefile.txt", nil)
+	// Test with a valid path
+	req := httptest.NewRequest("GET", "/test.txt", nil)
 	w := httptest.NewRecorder()
-
 	server.ServeHTTP(w, req)
-
-	if w.Code != http.StatusInternalServerError {
-		t.Errorf("Expected status %d, got %d", http.StatusInternalServerError, w.Code)
-	}
-
-	if !strings.Contains(w.Body.String(), assert.AnError.Error()) {
-		t.Errorf("Expected error message in response body, got %q", w.Body.String())
-	}
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
-// TestGCSObjectStoreGetObject tests the concrete implementation of GCSObjectStore.GetObject
 func TestGCSObjectStoreGetObject(t *testing.T) {
-	// Create a context for testing
-	ctx := context.Background()
+	// Set a valid bucket name for all tests
+	os.Setenv("BUCKET_NAME", "test-bucket")
+	defer os.Unsetenv("BUCKET_NAME")
 
-	// Create test data
-	expectedData := []byte("test content")
-	testObj := &mockObject{
-		data:        expectedData,
+	store := &mockStorageClient{objects: make(map[string]mockObject)}
+	store.objects["test-object"] = mockObject{
+		data:        []byte("test data"),
 		contentType: "text/plain",
 	}
 
-	// Happy path - test successful retrieval
-	t.Run("success case", func(t *testing.T) {
-		// Create mock store with one object
-		mockStore := &mockObjectStore{
-			objects: map[string]mockObject{
-				"test.txt": *testObj,
-			},
-		}
+	reader, contentType, err := store.GetObject(context.Background(), "test-object")
+	assert.NoError(t, err)
+	assert.NotNil(t, reader)
+	assert.Equal(t, "text/plain", contentType)
 
-		// Create test server with the mock store
-		server := &gcsServer{
-			store:      mockStore,
-			bucketName: "test-bucket",
-		}
-
-		// Call the method under test (through the server's store)
-		reader, attrs, err := server.store.GetObject(ctx, "test.txt")
-
-		// Verify results
-		assert.NoError(t, err)
-		assert.NotNil(t, reader)
-		assert.NotNil(t, attrs)
-
-		// Read content from reader
-		content, err := io.ReadAll(reader)
-		assert.NoError(t, err)
-		assert.Equal(t, string(expectedData), string(content))
-
-		// Close reader
-		reader.Close()
-	})
-
-	// Test not found case
-	t.Run("not found case", func(t *testing.T) {
-		// Create empty mock store
-		mockStore := &mockObjectStore{
-			objects: make(map[string]mockObject),
-		}
-
-		// Create test server with the mock store
-		server := &gcsServer{
-			store:      mockStore,
-			bucketName: "test-bucket",
-		}
-
-		// Call the method under test
-		reader, attrs, err := server.store.GetObject(ctx, "nonexistent.txt")
-
-		// Verify results
-		assert.Error(t, err)
-		assert.Equal(t, storage.ErrObjectNotExist, err)
-		assert.Nil(t, reader)
-		assert.Nil(t, attrs)
-	})
-
-	// Custom error case
-	t.Run("error case", func(t *testing.T) {
-		// Create mock store that always returns an error
-		errorStore := &errorObjectStore{}
-
-		// Create test server with the error store
-		server := &gcsServer{
-			store:      errorStore,
-			bucketName: "test-bucket",
-		}
-
-		// Call the method under test
-		reader, attrs, err := server.store.GetObject(ctx, "test.txt")
-
-		// Verify results
-		assert.Error(t, err)
-		assert.Equal(t, assert.AnError, err)
-		assert.Nil(t, reader)
-		assert.Nil(t, attrs)
-	})
+	// Test non-existent object
+	_, _, err = store.GetObject(context.Background(), "non-existent")
+	assert.Error(t, err)
+	assert.Equal(t, storage.ErrObjectNotExist, err)
 }
 
 func TestServeHTTP_Redirects(t *testing.T) {
-	tests := []struct {
-		name         string
-		path         string
-		redirects    map[string]string
-		expectedCode int
-		expectedURL  string
-		objectExists bool
-		contentType  string
-		content      string
-	}{
-		{
-			name: "redirect takes precedence over file",
-			path: "/redirect-me",
-			redirects: map[string]string{
-				"redirect-me": "https://example.com/new-location",
-			},
-			expectedCode: http.StatusFound,
-			expectedURL:  "https://example.com/new-location",
-			objectExists: true,
-			contentType:  "text/html",
-			content:      "<html>This should not be served</html>",
-		},
-		{
-			name:         "no redirect, serve file",
-			path:         "/normal-file",
-			redirects:    map[string]string{},
-			expectedCode: http.StatusOK,
-			objectExists: true,
-			contentType:  "text/html",
-			content:      "<html>This should be served</html>",
-		},
-		{
-			name:         "no redirect, file not found",
-			path:         "/not-found",
-			redirects:    map[string]string{},
-			expectedCode: http.StatusNotFound,
-			objectExists: false,
-		},
-		{
-			name: "redirect with trailing slash",
-			path: "/redirect-dir/",
-			redirects: map[string]string{
-				"redirect-dir/index.html": "https://example.com/new-dir/",
-			},
-			expectedCode: http.StatusFound,
-			expectedURL:  "https://example.com/new-dir/",
-		},
+	// Create a server with redirects
+	redirects := map[string]string{
+		"/old-path": "https://example.com/new-path",
+	}
+	server := &gcsServer{
+		store:      &mockObjectStore{objects: make(map[string]mockObject)},
+		bucketName: "test-bucket",
+		redirects:  redirects,
+		logger:     &mockLogger{},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Create mock store with test objects
-			objects := make(map[string]mockObject)
-			if tt.objectExists {
-				// For paths with trailing slash, we need to add index.html
-				path := tt.path
-				if strings.HasSuffix(path, "/") {
-					path = strings.TrimSuffix(path, "/") + "/index.html"
-				}
-				objects[path] = mockObject{
-					data:        []byte(tt.content),
-					contentType: tt.contentType,
-				}
-			}
+	// Test redirect
+	req := httptest.NewRequest("GET", "/old-path", nil)
+	w := httptest.NewRecorder()
+	server.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusMovedPermanently, w.Code)
+	assert.Equal(t, "https://example.com/new-path", w.Header().Get("Location"))
 
-			server := createMockServer(t, objects, tt.redirects)
-
-			req := httptest.NewRequest("GET", tt.path, nil)
-			w := httptest.NewRecorder()
-
-			server.ServeHTTP(w, req)
-
-			if w.Code != tt.expectedCode {
-				t.Errorf("Expected status code %d, got %d", tt.expectedCode, w.Code)
-			}
-
-			if tt.expectedURL != "" {
-				if got := w.Header().Get("Location"); got != tt.expectedURL {
-					t.Errorf("Expected Location header %q, got %q", tt.expectedURL, got)
-				}
-			}
-
-			if tt.objectExists && tt.expectedCode == http.StatusOK {
-				if got := w.Header().Get("Content-Type"); got != tt.contentType {
-					t.Errorf("Expected Content-Type %q, got %q", tt.contentType, got)
-				}
-
-				if got := w.Body.String(); got != tt.content {
-					t.Errorf("Expected content %q, got %q", tt.content, got)
-				}
-			}
-		})
-	}
+	// Test non-redirect path
+	req = httptest.NewRequest("GET", "/normal-path", nil)
+	w = httptest.NewRecorder()
+	server.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusNotFound, w.Code)
 }

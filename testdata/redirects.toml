@@ -1,0 +1,3 @@
+[redirects]
+"/old-path" = "https://example.com/new-path"
+"/another-path" = "https://example.com/destination" 
