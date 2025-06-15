@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -18,6 +19,14 @@ type mockRedirectStore struct {
 }
 
 func (m *mockRedirectStore) GetObject(ctx context.Context, path string) (io.ReadCloser, *storage.ObjectAttrs, error) {
+	// Handle the specific path that loadRedirects expects
+	expectedPath := filepath.Join(".spray", "redirects.toml")
+	if path == expectedPath {
+		return io.NopCloser(strings.NewReader(m.content)), &storage.ObjectAttrs{
+			ContentType: "application/toml",
+		}, nil
+	}
+
 	if obj, ok := m.objects[path]; ok {
 		return io.NopCloser(strings.NewReader(string(obj.data))), &storage.ObjectAttrs{
 			ContentType: obj.contentType,

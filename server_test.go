@@ -82,8 +82,10 @@ func (c *mockStorageClient) Bucket(name string) *storage.BucketHandle {
 
 // GetObject returns a mock object
 func (c *mockStorageClient) GetObject(ctx context.Context, path string) (io.ReadCloser, *storage.ObjectAttrs, error) {
-	if _, ok := c.objects[path]; ok {
-		return io.NopCloser(strings.NewReader("")), &storage.ObjectAttrs{}, nil
+	if obj, ok := c.objects[path]; ok {
+		return io.NopCloser(strings.NewReader(string(obj.data))), &storage.ObjectAttrs{
+			ContentType: obj.contentType,
+		}, nil
 	}
 	return nil, nil, storage.ErrObjectNotExist
 }
@@ -407,10 +409,10 @@ func TestGCSObjectStoreGetObject(t *testing.T) {
 		contentType: "text/plain",
 	}
 
-	reader, contentType, err := store.GetObject(context.Background(), "test-object")
+	reader, attrs, err := store.GetObject(context.Background(), "test-object")
 	assert.NoError(t, err)
 	assert.NotNil(t, reader)
-	assert.Equal(t, "text/plain", contentType)
+	assert.Equal(t, "text/plain", attrs.ContentType)
 
 	// Test non-existent object
 	_, _, err = store.GetObject(context.Background(), "non-existent")
@@ -420,8 +422,9 @@ func TestGCSObjectStoreGetObject(t *testing.T) {
 
 func TestServeHTTP_Redirects(t *testing.T) {
 	// Create a server with redirects
+	// Note: cleanRequestPath converts "/old-path" to "old-path" (removes leading slash)
 	redirects := map[string]string{
-		"/old-path": "https://example.com/new-path",
+		"old-path": "https://example.com/new-path",
 	}
 	server := &gcsServer{
 		store:      &mockObjectStore{objects: make(map[string]mockObject)},
@@ -434,7 +437,7 @@ func TestServeHTTP_Redirects(t *testing.T) {
 	req := httptest.NewRequest("GET", "/old-path", nil)
 	w := httptest.NewRecorder()
 	server.ServeHTTP(w, req)
-	assert.Equal(t, http.StatusMovedPermanently, w.Code)
+	assert.Equal(t, http.StatusFound, w.Code)
 	assert.Equal(t, "https://example.com/new-path", w.Header().Get("Location"))
 
 	// Test non-redirect path

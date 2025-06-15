@@ -60,6 +60,11 @@ func loadRedirects(ctx context.Context, store ObjectStore) (map[string]string, e
 		return nil, fmt.Errorf("error parsing redirects file at %s: %v", configPath, err)
 	}
 
+	// Initialize redirects map if it's nil
+	if redirectConfig.Redirects == nil {
+		redirectConfig.Redirects = make(map[string]string)
+	}
+
 	// Validate redirect URLs
 	for path, dest := range redirectConfig.Redirects {
 		if _, err := url.ParseRequestURI(dest); err != nil {
