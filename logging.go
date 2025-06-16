@@ -108,7 +108,14 @@ func (c *zapLogClient) Logger(name string, opts ...logging.LoggerOption) Logger 
 }
 
 func (c *zapLogClient) Close() error {
-	return c.logger.Sync()
+	// Sync can fail in test environments or when stderr is not available
+	// We'll try to sync but ignore errors since this is just a cleanup operation
+	if err := c.logger.Sync(); err != nil {
+		// Ignore the sync error and don't fail the close operation
+		// This commonly happens in test environments or when stderr is redirected
+		return nil
+	}
+	return nil
 }
 
 // newZapLogClient creates a new zap logging client for debugging
