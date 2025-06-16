@@ -213,6 +213,12 @@ func (s *gcsServer) sendUserFriendlyError(w http.ResponseWriter, r *http.Request
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(statusCode)
 
+		// Determine if we should show the homepage link
+		var homepageLink string
+		if r.URL.Path != "/" && path != "index.html" {
+			homepageLink = "\n                <li>Go back to the <a href=\"/\">homepage</a></li>"
+		}
+
 		htmlResponse := fmt.Sprintf(`<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -283,8 +289,7 @@ func (s *gcsServer) sendUserFriendlyError(w http.ResponseWriter, r *http.Request
             <strong>What can you do?</strong>
             <ul>
                 <li>Check the URL for typos</li>
-                <li>Try refreshing the page</li>
-                <li>Go back to the <a href="/">homepage</a></li>
+                <li>Try refreshing the page</li>%s
             </ul>
         </div>
     </div>
@@ -292,7 +297,7 @@ func (s *gcsServer) sendUserFriendlyError(w http.ResponseWriter, r *http.Request
         <a href="https://github.com/picotechllc/spray" target="_blank" rel="noopener">spray</a>/%s
     </footer>
 </body>
-</html>`, statusCode, http.StatusText(statusCode), statusCode, http.StatusText(statusCode), userMessage, Version)
+</html>`, statusCode, http.StatusText(statusCode), statusCode, http.StatusText(statusCode), userMessage, homepageLink, Version)
 
 		w.Write([]byte(htmlResponse))
 		return
