@@ -116,6 +116,28 @@ type errorResponse struct {
 	Status  int    `json:"status"`
 }
 
+// responseWriter wraps http.ResponseWriter to capture the status code
+type responseWriter struct {
+	http.ResponseWriter
+	statusCode int
+	written    bool
+}
+
+func (rw *responseWriter) WriteHeader(code int) {
+	if !rw.written {
+		rw.statusCode = code
+		rw.written = true
+		rw.ResponseWriter.WriteHeader(code)
+	}
+}
+
+func (rw *responseWriter) Write(data []byte) (int, error) {
+	if !rw.written {
+		rw.written = true
+	}
+	return rw.ResponseWriter.Write(data)
+}
+
 // logError logs an error with structured JSON format
 func (s *gcsServer) logError(severity logging.Severity, operation, path string, statusCode int, err error) {
 	payload := map[string]any{
@@ -327,10 +349,54 @@ func (s *gcsServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	activeRequests.WithLabelValues(s.bucketName).Inc()
 	defer activeRequests.WithLabelValues(s.bucketName).Dec()
 
+	// Log incoming request
+	s.logInfo("incoming_request", r.URL.Path, map[string]any{
+		"method":     r.Method,
+		"user_agent": r.Header.Get("User-Agent"),
+		"remote_ip":  r.RemoteAddr,
+		"accept":     r.Header.Get("Accept"),
+	})
+
+	// Wrap ResponseWriter to capture status code
+	wrapped := &responseWriter{ResponseWriter: w, statusCode: 200}
+
+	// Panic recovery
+	defer func() {
+		if err := recover(); err != nil {
+			wrapped.statusCode = 500
+
+			// Create detailed error with stack trace
+			panicErr := fmt.Errorf("panic: %v", err)
+			s.logError(logging.Error, "panic_recovery", r.URL.Path, http.StatusInternalServerError, panicErr)
+
+			// Also log additional panic details
+			s.logError(logging.Error, "panic_details", r.URL.Path, http.StatusInternalServerError, fmt.Errorf("panic details - method: %s, path: %s, user_agent: %s", r.Method, r.URL.Path, r.Header.Get("User-Agent")))
+
+			errorTotal.WithLabelValues(s.bucketName, r.URL.Path, "panic").Inc()
+			requestsTotal.WithLabelValues(s.bucketName, r.URL.Path, r.Method, "500").Inc()
+
+			// Try to send an error response if headers haven't been written
+			if !wrapped.written {
+				http.Error(wrapped, "Internal Server Error", http.StatusInternalServerError)
+			}
+		}
+
+		// Log request completion
+		duration := time.Since(start)
+		s.logInfo("request_completed", r.URL.Path, map[string]any{
+			"method":      r.Method,
+			"status":      wrapped.statusCode,
+			"duration_ms": duration.Milliseconds(),
+		})
+
+		// Record request duration
+		requestDuration.WithLabelValues(s.bucketName, r.URL.Path, r.Method).Observe(duration.Seconds())
+	}()
+
 	cleanPath, err := cleanRequestPath(r.URL.Path)
 	if err != nil {
 		s.sendUserFriendlyError(
-			w, r, r.URL.Path, http.StatusBadRequest,
+			wrapped, r, r.URL.Path, http.StatusBadRequest,
 			"The requested path is invalid.",
 			err,
 		)
@@ -346,7 +412,8 @@ func (s *gcsServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		requestsTotal.WithLabelValues(s.bucketName, cleanPath, r.Method, "302").Inc()
 		redirectHits.WithLabelValues(s.bucketName, cleanPath, destination).Inc()
 		redirectLatency.WithLabelValues(s.bucketName, cleanPath).Observe(time.Since(redirectStart).Seconds())
-		http.Redirect(w, r, destination, http.StatusFound)
+		wrapped.statusCode = 302
+		http.Redirect(wrapped, r, destination, http.StatusFound)
 		return
 	}
 
@@ -356,9 +423,11 @@ func (s *gcsServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	gcsLatency.WithLabelValues(s.bucketName, "get_object").Observe(time.Since(gcsStart).Seconds())
 
 	if err != nil {
+		// Log the specific storage error for debugging
+		s.logError(logging.Error, "storage_error", cleanPath, 0, fmt.Errorf("GCS GetObject error for path %s: %v", cleanPath, err))
 		if err == storage.ErrObjectNotExist {
 			s.sendUserFriendlyError(
-				w, r, cleanPath, http.StatusNotFound,
+				wrapped, r, cleanPath, http.StatusNotFound,
 				"The requested resource was not found.",
 				err,
 			)
@@ -367,7 +436,7 @@ func (s *gcsServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		if isPermissionError(err) {
 			s.sendUserFriendlyError(
-				w, r, cleanPath, http.StatusInternalServerError,
+				wrapped, r, cleanPath, http.StatusInternalServerError,
 				"The service is temporarily unavailable due to a configuration issue. Please try again later.",
 				err,
 			)
@@ -376,7 +445,7 @@ func (s *gcsServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		// For any other storage error
 		s.sendUserFriendlyError(
-			w, r, cleanPath, http.StatusInternalServerError,
+			wrapped, r, cleanPath, http.StatusInternalServerError,
 			"The service is temporarily unavailable. Please try again later.",
 			err,
 		)
@@ -387,11 +456,14 @@ func (s *gcsServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Track object size
 	objectSize.WithLabelValues(s.bucketName, cleanPath).Observe(float64(attrs.Size))
 
-	w.Header().Set("Content-Type", attrs.ContentType)
+	wrapped.Header().Set("Content-Type", attrs.ContentType)
 
 	// Copy the object contents to the response while tracking bytes transferred
-	written, err := io.Copy(w, reader)
+	written, err := io.Copy(wrapped, reader)
 	if err != nil {
+		// If we encounter an error during copy, the response might already be partially written
+		// We can't change the status code at this point, but we can log the error
+		wrapped.statusCode = 500
 		s.logError(logging.Error, "copy_contents", cleanPath, http.StatusInternalServerError, err)
 		errorTotal.WithLabelValues(s.bucketName, cleanPath, "copy_error").Inc()
 		requestsTotal.WithLabelValues(s.bucketName, cleanPath, r.Method, "500").Inc()
@@ -407,10 +479,6 @@ func (s *gcsServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			"duration_ms":  time.Since(start).Milliseconds(),
 		})
 	}
-
-	// Record request duration
-	duration := time.Since(start).Seconds()
-	requestDuration.WithLabelValues(s.bucketName, cleanPath, r.Method).Observe(duration)
 }
 
 func readyzHandler(w http.ResponseWriter, r *http.Request) {
