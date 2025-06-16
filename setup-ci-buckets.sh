@@ -78,7 +78,7 @@ echo ""
 
 # List of buckets needed for CI
 BUCKETS=(
-    "spray-test-bucket-TestGCSIntegration"
+    "spray-test-bucket-gcsintegration"
 )
 
 # Create buckets and set permissions
@@ -94,7 +94,7 @@ echo -e "${GREEN}✓ All CI buckets have been set up successfully!${NC}"
 echo ""
 echo -e "${YELLOW}Next steps:${NC}"
 echo "1. Set TEST_BUCKET environment variable in your CI to use pre-existing bucket:"
-echo "   export TEST_BUCKET=spray-test-bucket-TestGCSIntegration"
+echo "   export TEST_BUCKET=spray-test-bucket-gcsintegration"
 echo ""
 echo "2. Verify permissions by running integration tests:"
 echo "   go test -tags=integration ./..."
