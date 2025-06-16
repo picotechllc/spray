@@ -81,6 +81,22 @@ func logStructuredWarning(operation, path string, err error) {
 	}
 }
 
+// cleanRedirectPath normalizes a redirect path from the configuration file
+// to match the format used by cleanRequestPath (removes leading slash)
+func cleanRedirectPath(path string) string {
+	// Handle empty path
+	if path == "" {
+		return ""
+	}
+
+	// Remove leading slash to match cleanRequestPath behavior
+	if strings.HasPrefix(path, "/") {
+		return path[1:]
+	}
+
+	return path
+}
+
 // loadRedirects loads redirects from a redirects.toml file in the .spray directory
 func loadRedirects(ctx context.Context, store ObjectStore) (map[string]string, error) {
 	configPath := filepath.Join(configDir, redirectsFile)
@@ -112,15 +128,21 @@ func loadRedirects(ctx context.Context, store ObjectStore) (map[string]string, e
 		redirectConfig.Redirects = make(map[string]string)
 	}
 
-	// Validate redirect URLs
+	// Clean and validate redirects
+	cleanedRedirects := make(map[string]string)
 	for path, dest := range redirectConfig.Redirects {
+		// Validate destination URL
 		if _, err := url.ParseRequestURI(dest); err != nil {
 			redirectConfigErrors.WithLabelValues("", "invalid_url").Inc()
 			return nil, fmt.Errorf("invalid redirect destination URL for path %q: %v", path, err)
 		}
+
+		// Clean the redirect path to match request path format
+		cleanedPath := cleanRedirectPath(path)
+		cleanedRedirects[cleanedPath] = dest
 	}
 
-	return redirectConfig.Redirects, nil
+	return cleanedRedirects, nil
 }
 
 // loadConfig loads configuration from environment variables and the provided base config.
