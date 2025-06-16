@@ -52,7 +52,7 @@ create_test_object() {
     local bucket_name="$1"
     
     echo -e "${GREEN}Creating test object in gs://$bucket_name...${NC}"
-    echo "Hello, World!" | gsutil cp - "gs://$bucket_name/test.txt"
+    printf "Hello, World!" | gsutil cp - "gs://$bucket_name/test.txt"
     gsutil setmeta -h "Content-Type:text/plain" "gs://$bucket_name/test.txt"
     echo -e "${GREEN}✓ Created test object gs://$bucket_name/test.txt${NC}"
 }
