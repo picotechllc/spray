@@ -98,6 +98,14 @@ gsutil -m -h "Cache-Control:public, max-age=86400" cp -r "../website/*.css" "gs:
 echo "📋 Uploading any other web assets..."
 gsutil -m cp -r ../website/* "gs://$BUCKET_NAME/" 2>/dev/null || true
 
+# Upload .spray configuration directory (includes redirects)  
+if [ -d "../website/.spray" ]; then
+    echo "⚙️  Uploading Spray configuration (.spray directory)..."
+    gsutil -m cp -r "../website/.spray" "gs://$BUCKET_NAME/" 2>/dev/null || true
+else
+    echo "ℹ️  No .spray directory found - skipping configuration upload"
+fi
+
 echo ""
 echo "🔍 Verifying upload..."
 gsutil ls "gs://$BUCKET_NAME/"
