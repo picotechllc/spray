@@ -38,38 +38,19 @@ func TestGCSIntegration(t *testing.T) {
 	defer logClient.Close()
 	logger := logClient.Logger("gcs-server")
 
-	// Create a test bucket
+	// Use a pre-configured test bucket (should be set up by setup-ci-buckets.sh)
 	bucketName := os.Getenv("TEST_BUCKET")
 	if bucketName == "" {
-		bucketName = "spray-test-bucket-" + t.Name()
+		// Fallback to the expected bucket name that should be created by setup script
+		bucketName = "spray-test-bucket-TestGCSIntegration"
 	}
+
+	t.Logf("Using test bucket: %s", bucketName)
 	bucket := client.Bucket(bucketName)
 
-	// Create the bucket if it doesn't exist and we're using a dynamic bucket
-	if bucketName == "spray-test-bucket-"+t.Name() {
-		_, err = bucket.Attrs(ctx)
-		if err == storage.ErrBucketNotExist {
-			err = bucket.Create(ctx, "test-project", nil)
-			require.NoError(t, err, "Failed to create test bucket")
-			defer func() {
-				// Clean up: delete the bucket after test
-				err := bucket.Delete(ctx)
-				if err != nil {
-					t.Logf("Warning: failed to delete test bucket: %v", err)
-				}
-			}()
-		} else {
-			require.NoError(t, err, "Failed to check bucket existence")
-		}
-	}
-
-	// Create a test object
-	obj := bucket.Object("test.txt")
-	w := obj.NewWriter(ctx)
-	_, err = io.WriteString(w, "Hello, World!")
-	require.NoError(t, err, "Failed to write test object")
-	err = w.Close()
-	require.NoError(t, err, "Failed to close test object writer")
+	// Verify bucket exists and is accessible
+	_, err = bucket.Attrs(ctx)
+	require.NoError(t, err, "Failed to access test bucket %s. Make sure it exists and the service account has permissions.", bucketName)
 
 	// Create the GCS object store
 	store := &GCSObjectStore{
@@ -80,9 +61,27 @@ func TestGCSIntegration(t *testing.T) {
 	server, err := newGCSServer(ctx, bucketName, &gcpLoggerAdapter{logger: logger}, store, make(map[string]string))
 	require.NoError(t, err, "Failed to create GCS server")
 
-	// Test object retrieval
-	reader, attrs, err := server.store.GetObject(ctx, "test.txt")
-	require.NoError(t, err, "Failed to get test object")
+	// Test object retrieval using pre-existing test object
+	testObjectName := "test.txt"
+	reader, attrs, err := server.store.GetObject(ctx, testObjectName)
+	if err == storage.ErrObjectNotExist {
+		t.Logf("Test object %s doesn't exist, creating it...", testObjectName)
+
+		// Try to create the test object (this requires storage.objects.create permission)
+		obj := bucket.Object(testObjectName)
+		w := obj.NewWriter(ctx)
+		_, writeErr := io.WriteString(w, "Hello, World!")
+		require.NoError(t, writeErr, "Failed to write test object")
+		closeErr := w.Close()
+		require.NoError(t, closeErr, "Failed to close test object writer")
+
+		t.Logf("Created test object %s", testObjectName)
+
+		// Now try to read it again
+		reader, attrs, err = server.store.GetObject(ctx, testObjectName)
+	}
+
+	require.NoError(t, err, "Failed to get test object %s", testObjectName)
 	defer reader.Close()
 
 	// Verify object attributes
@@ -97,4 +96,6 @@ func TestGCSIntegration(t *testing.T) {
 	// Test non-existent object
 	_, _, err = server.store.GetObject(ctx, "nonexistent.txt")
 	assert.ErrorIs(t, err, storage.ErrObjectNotExist, "Expected ErrObjectNotExist for non-existent object")
+
+	t.Logf("✓ Integration test completed successfully using bucket: %s", bucketName)
 }
