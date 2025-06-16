@@ -38,12 +38,8 @@ func TestGCSIntegration(t *testing.T) {
 	defer logClient.Close()
 	logger := logClient.Logger("gcs-server")
 
-	// Use a pre-configured test bucket (should be set up by setup-ci-buckets.sh)
-	bucketName := os.Getenv("TEST_BUCKET")
-	if bucketName == "" {
-		// Fallback to the expected bucket name that should be created by setup script
-		bucketName = "spray-test-bucket-TestGCSIntegration"
-	}
+	// Use the specific test bucket created by setup-ci-buckets.sh
+	bucketName := "spray-test-bucket-gcsintegration"
 
 	t.Logf("Using test bucket: %s", bucketName)
 	bucket := client.Bucket(bucketName)

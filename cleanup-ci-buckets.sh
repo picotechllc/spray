@@ -43,7 +43,7 @@ echo ""
 
 # List of buckets to clean up
 BUCKETS=(
-    "spray-test-bucket-TestGCSIntegration"
+    "spray-test-bucket-gcsintegration"
 )
 
 # Confirm deletion
