@@ -54,12 +54,35 @@ You can configure custom redirects by creating a `.spray/redirects.toml` file in
 
 The redirects will take precedence over any files that might exist at the same path. The server will return a 302 Found response with the destination URL.
 
+### Inspecting Redirect Configuration
+
+You can inspect the current redirect configuration of a running Spray instance by accessing the `/config/redirects` endpoint. This returns a JSON response with the following structure:
+
+```json
+{
+  "redirects": {
+    "/old-path": "https://example.com/new-path",
+    "/github": "https://github.com/picotechllc/spray"
+  },
+  "count": 2,
+  "config_source": ".spray/redirects.toml",
+  "bucket_name": "your-bucket-name"
+}
+```
+
+This endpoint is useful for:
+- Debugging redirect issues
+- Verifying configuration changes have been applied
+- Monitoring redirect rules in production
+- Integration with configuration management tools
+
 ## Endpoints
 
 - `/`: Serves static files from the GCS bucket
 - `/metrics`: Prometheus metrics endpoint
 - `/readyz`: Readiness probe endpoint
 - `/livez`: Liveness probe endpoint
+- `/config/redirects`: Returns the current redirect configuration as JSON
 
 ## Installation
 

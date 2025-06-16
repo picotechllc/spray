@@ -27,6 +27,7 @@ var DefaultServerSetup ServerSetup = func(ctx context.Context, cfg *config, logC
 	mux.Handle("/metrics", promhttp.Handler())
 	mux.HandleFunc("/readyz", readyzHandler)
 	mux.HandleFunc("/livez", livezHandler)
+	mux.HandleFunc("/config/redirects", configRedirectsHandler(server))
 
 	return &http.Server{
 		Addr:    ":" + cfg.port,
