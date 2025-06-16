@@ -497,6 +497,43 @@ func livezHandler(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("ok"))
 }
 
+// configRedirectsHandler returns the current redirect configuration as JSON
+func configRedirectsHandler(server *gcsServer) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			w.Write([]byte("Method not allowed"))
+			return
+		}
+
+		// Create response structure
+		response := struct {
+			Redirects    map[string]string `json:"redirects"`
+			Count        int               `json:"count"`
+			ConfigSource string            `json:"config_source"`
+			BucketName   string            `json:"bucket_name"`
+		}{
+			Redirects:    server.redirects,
+			Count:        len(server.redirects),
+			ConfigSource: ".spray/redirects.toml",
+			BucketName:   server.bucketName,
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			server.logError(logging.Error, "config_redirects", "/config/redirects", http.StatusInternalServerError, err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+
+		server.logInfo("config_redirects", "/config/redirects", map[string]any{
+			"redirect_count": len(server.redirects),
+		})
+	}
+}
+
 // createServer creates a new HTTP server with the given configuration.
 func createServer(ctx context.Context, cfg *config, logClient LoggingClient) (*http.Server, error) {
 	logger := logClient.Logger("gcs-server")
@@ -511,6 +548,7 @@ func createServer(ctx context.Context, cfg *config, logClient LoggingClient) (*h
 	mux.Handle("/metrics", promhttp.Handler())
 	mux.HandleFunc("/readyz", readyzHandler)
 	mux.HandleFunc("/livez", livezHandler)
+	mux.HandleFunc("/config/redirects", configRedirectsHandler(server))
 
 	return &http.Server{
 		Addr:    ":" + cfg.port,

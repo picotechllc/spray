@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -445,4 +446,106 @@ func TestServeHTTP_Redirects(t *testing.T) {
 	w = httptest.NewRecorder()
 	server.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+func TestConfigRedirectsHandler(t *testing.T) {
+	// Create a server with some redirects
+	redirects := map[string]string{
+		"/old-path":     "https://example.com/new-path",
+		"/github":       "https://github.com/picotechllc/spray",
+		"/another-path": "https://example.com/destination",
+	}
+
+	server := &gcsServer{
+		bucketName: "test-bucket",
+		redirects:  redirects,
+		logger:     &mockLogger{},
+	}
+
+	// Create the handler
+	handler := configRedirectsHandler(server)
+
+	// Test GET request
+	req := httptest.NewRequest("GET", "/config/redirects", nil)
+	rr := httptest.NewRecorder()
+
+	handler(rr, req)
+
+	// Check the status code
+	assert.Equal(t, http.StatusOK, rr.Code)
+
+	// Check the content type
+	assert.Equal(t, "application/json", rr.Header().Get("Content-Type"))
+
+	// Parse the response
+	var response struct {
+		Redirects    map[string]string `json:"redirects"`
+		Count        int               `json:"count"`
+		ConfigSource string            `json:"config_source"`
+		BucketName   string            `json:"bucket_name"`
+	}
+
+	err := json.Unmarshal(rr.Body.Bytes(), &response)
+	assert.NoError(t, err)
+
+	// Verify the response content
+	assert.Equal(t, redirects, response.Redirects)
+	assert.Equal(t, len(redirects), response.Count)
+	assert.Equal(t, ".spray/redirects.toml", response.ConfigSource)
+	assert.Equal(t, "test-bucket", response.BucketName)
+}
+
+func TestConfigRedirectsHandler_MethodNotAllowed(t *testing.T) {
+	server := &gcsServer{
+		bucketName: "test-bucket",
+		redirects:  map[string]string{},
+		logger:     &mockLogger{},
+	}
+
+	handler := configRedirectsHandler(server)
+
+	// Test POST request (should be rejected)
+	req := httptest.NewRequest("POST", "/config/redirects", nil)
+	rr := httptest.NewRecorder()
+
+	handler(rr, req)
+
+	// Check the status code
+	assert.Equal(t, http.StatusMethodNotAllowed, rr.Code)
+	assert.Equal(t, "Method not allowed", rr.Body.String())
+}
+
+func TestConfigRedirectsHandler_EmptyRedirects(t *testing.T) {
+	server := &gcsServer{
+		bucketName: "test-bucket",
+		redirects:  map[string]string{}, // Empty redirects
+		logger:     &mockLogger{},
+	}
+
+	handler := configRedirectsHandler(server)
+
+	req := httptest.NewRequest("GET", "/config/redirects", nil)
+	rr := httptest.NewRecorder()
+
+	handler(rr, req)
+
+	// Check the status code
+	assert.Equal(t, http.StatusOK, rr.Code)
+
+	// Parse the response
+	var response struct {
+		Redirects    map[string]string `json:"redirects"`
+		Count        int               `json:"count"`
+		ConfigSource string            `json:"config_source"`
+		BucketName   string            `json:"bucket_name"`
+	}
+
+	err := json.Unmarshal(rr.Body.Bytes(), &response)
+	assert.NoError(t, err)
+
+	// Verify empty redirects are handled correctly
+	assert.Equal(t, map[string]string{}, response.Redirects)
+	assert.Equal(t, 0, response.Count)
+	assert.Equal(t, ".spray/redirects.toml", response.ConfigSource)
+	assert.Equal(t, "test-bucket", response.BucketName)
 }
