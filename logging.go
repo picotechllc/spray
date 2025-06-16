@@ -11,9 +11,24 @@ import (
 
 // createLoggingClient creates a new logging client.
 func createLoggingClient(ctx context.Context, projectID string) (LoggingClient, error) {
-	// Check if we're running in a test environment or offline mode
-	if os.Getenv("LOGGING_OFFLINE") == "true" || (os.Getenv("GOOGLE_APPLICATION_CREDENTIALS") == "" && os.Getenv("GCP_PROJECT") == "") {
-		// In test environment or offline mode, return a zap LoggingClient for debugging
+	// Explicit test mode - always use mock
+	if os.Getenv("LOGGING_TEST_MODE") == "true" {
+		return newMockLogClient(), nil
+	}
+
+	// Explicit offline mode - use zap for debugging
+	if os.Getenv("LOGGING_OFFLINE") == "true" {
+		return newZapLogClient(), nil
+	}
+
+	// Check if we're in a testing context (no credentials available)
+	// but want actual debug output
+	if os.Getenv("GOOGLE_APPLICATION_CREDENTIALS") == "" && os.Getenv("GCP_PROJECT") == "" {
+		// If we're running tests (detected by testing.Testing() or test binary),
+		// use mock logger, otherwise use zap for debugging
+		if isTestContext() {
+			return newMockLogClient(), nil
+		}
 		return newZapLogClient(), nil
 	}
 
@@ -23,6 +38,18 @@ func createLoggingClient(ctx context.Context, projectID string) (LoggingClient, 
 		return nil, err
 	}
 	return newGCPLoggingClient(client), nil
+}
+
+// isTestContext checks if we're running in a test context
+func isTestContext() bool {
+	// Check if we're running as a test binary
+	for _, arg := range os.Args {
+		if arg == "-test.v" || arg == "-test.run" ||
+			(len(arg) > 5 && arg[:5] == "-test") {
+			return true
+		}
+	}
+	return false
 }
 
 // zapLogger wraps zap.Logger to implement our Logger interface
