@@ -51,7 +51,7 @@ func TestLoadRedirects(t *testing.T) {
 		{
 			name:          "valid_redirects",
 			content:       string(content),
-			expected:      map[string]string{"/old-path": "https://example.com/new-path", "/another-path": "https://example.com/destination"},
+			expected:      map[string]string{"old-path": "https://example.com/new-path", "another-path": "https://example.com/destination"},
 			expectedError: false,
 		},
 		{
@@ -91,6 +91,76 @@ func TestLoadRedirects(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestCleanRedirectPath(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "path_with_leading_slash",
+			input:    "/github",
+			expected: "github",
+		},
+		{
+			name:     "path_without_leading_slash",
+			input:    "github",
+			expected: "github",
+		},
+		{
+			name:     "empty_path",
+			input:    "",
+			expected: "",
+		},
+		{
+			name:     "root_path",
+			input:    "/",
+			expected: "",
+		},
+		{
+			name:     "nested_path_with_slash",
+			input:    "/api/v1/test",
+			expected: "api/v1/test",
+		},
+		{
+			name:     "nested_path_without_slash",
+			input:    "api/v1/test",
+			expected: "api/v1/test",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := cleanRedirectPath(tt.input)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestLoadRedirects_PathCleaning(t *testing.T) {
+	// Test TOML content with paths that have leading slashes (user-friendly format)
+	content := `[redirects]
+"/github" = "https://github.com/picotechllc/spray"
+"/docs" = "https://docs.example.com"
+"no-slash" = "https://example.com/no-slash"`
+
+	expected := map[string]string{
+		"github":   "https://github.com/picotechllc/spray",
+		"docs":     "https://docs.example.com",
+		"no-slash": "https://example.com/no-slash",
+	}
+
+	// Set a valid bucket name for the test
+	os.Setenv("BUCKET_NAME", "test-bucket")
+	defer os.Unsetenv("BUCKET_NAME")
+
+	store := &mockRedirectStore{content: content}
+	redirects, err := loadRedirects(context.Background(), store)
+
+	assert.NoError(t, err)
+	assert.Equal(t, expected, redirects)
 }
 
 func TestRedirectMetrics(t *testing.T) {
