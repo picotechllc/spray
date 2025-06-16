@@ -151,6 +151,14 @@ func (s *gcsServer) logError(severity logging.Severity, operation, path string, 
 	if err != nil {
 		payload["error"] = err.Error()
 		payload["error_type"] = getErrorType(err)
+
+		// Add credential context for permission errors
+		if isPermissionError(err) {
+			credContext := getCredentialContext()
+			for k, v := range credContext {
+				payload[k] = v
+			}
+		}
 	}
 
 	entry := logging.Entry{
@@ -423,8 +431,6 @@ func (s *gcsServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	gcsLatency.WithLabelValues(s.bucketName, "get_object").Observe(time.Since(gcsStart).Seconds())
 
 	if err != nil {
-		// Log the specific storage error for debugging
-		s.logError(logging.Error, "storage_error", cleanPath, 0, fmt.Errorf("GCS GetObject error for path %s: %v", cleanPath, err))
 		if err == storage.ErrObjectNotExist {
 			s.sendUserFriendlyError(
 				wrapped, r, cleanPath, http.StatusNotFound,
@@ -555,4 +561,33 @@ func runServerImpl(ctx context.Context, srv *http.Server) error {
 	}
 
 	return nil
+}
+
+// getCredentialContext returns information about the current credentials being used
+func getCredentialContext() map[string]any {
+	credContext := make(map[string]any)
+
+	// Check for Application Default Credentials file
+	if credsPath := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS"); credsPath != "" {
+		credContext["credentials_source"] = "service_account_file"
+		credContext["credentials_file"] = credsPath
+	} else {
+		// Check for other common credential sources
+		credContext["credentials_source"] = "application_default_credentials"
+
+		// Check if running on GCE/GKE
+		if os.Getenv("GOOGLE_CLOUD_PROJECT") != "" || os.Getenv("GCLOUD_PROJECT") != "" {
+			credContext["gcp_environment"] = "cloud_environment"
+		}
+	}
+
+	// Add project information
+	if projectID := os.Getenv("GOOGLE_PROJECT_ID"); projectID != "" {
+		credContext["project_id"] = projectID
+	}
+	if gcpProject := os.Getenv("GCP_PROJECT"); gcpProject != "" {
+		credContext["gcp_project"] = gcpProject
+	}
+
+	return credContext
 }

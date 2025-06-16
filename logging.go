@@ -120,14 +120,22 @@ func (c *zapLogClient) Close() error {
 
 // newZapLogClient creates a new zap logging client for debugging
 func newZapLogClient() LoggingClient {
-	// Create a development config for better debugging output
-	config := zap.NewDevelopmentConfig()
+	// Create a production config for proper JSON output
+	config := zap.NewProductionConfig()
 	config.EncoderConfig.TimeKey = "timestamp"
 	config.EncoderConfig.LevelKey = "severity"
 	config.EncoderConfig.CallerKey = "caller"
 	config.EncoderConfig.MessageKey = "message"
 	config.EncoderConfig.EncodeTime = zapcore.RFC3339TimeEncoder
 	config.EncoderConfig.EncodeLevel = zapcore.CapitalLevelEncoder
+
+	// Enable caller info for debugging but keep JSON format
+	config.Development = false
+	config.DisableCaller = false
+	config.DisableStacktrace = false
+
+	// Ensure JSON encoding
+	config.Encoding = "json"
 
 	// Output to stderr
 	config.OutputPaths = []string{"stderr"}
