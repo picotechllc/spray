@@ -1,5 +1,10 @@
 ## OS-specific metadata unrelated to the project
 .DS_Store
+
 ## Binaries
 spray
 spray.exe
+
+## Coverage
+coverage
+coverage.out
