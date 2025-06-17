@@ -16,7 +16,7 @@ Spray is a minimal Go web server that serves static files from Google Cloud Stor
 - `deploy.md` - Detailed deployment instructions
 - `deploy.sh` - Bash deployment script (Linux/macOS)
 - `deploy.ps1` - PowerShell deployment script (Windows)
-- `README.md` - This file
+- `README.md` - This file!
 
 ## Features
 
