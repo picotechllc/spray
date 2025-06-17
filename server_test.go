@@ -107,10 +107,15 @@ func createMockServer(t *testing.T, objects map[string]mockObject, redirects map
 		objects: objects,
 	}
 
+	headers := &HeaderConfig{
+		PoweredBy: PoweredByConfig{Enabled: true},
+	}
+
 	return &gcsServer{
 		store:      store,
 		bucketName: "test-bucket",
 		redirects:  redirects,
+		headers:    headers,
 		logger:     &mockLogger{},
 	}
 }
@@ -322,18 +327,33 @@ func TestCleanRequestPath(t *testing.T) {
 }
 
 func TestNewGCSServer(t *testing.T) {
-	// Test successful server creation
-	store := &mockObjectStore{objects: make(map[string]mockObject)}
-	server, err := newGCSServer(context.Background(), "test-bucket", &mockLogger{}, store, nil)
+	store := &mockObjectStore{
+		objects: make(map[string]mockObject),
+	}
+
+	headers := &HeaderConfig{
+		PoweredBy: PoweredByConfig{Enabled: true},
+	}
+
+	server, err := newGCSServer(context.Background(), "test-bucket", &mockLogger{}, store, nil, headers)
 	assert.NoError(t, err)
 	assert.NotNil(t, server)
 	assert.Equal(t, "test-bucket", server.bucketName)
-	assert.Equal(t, store, server.store)
 
-	// Test nil store error
-	server, err = newGCSServer(context.Background(), "test-bucket", &mockLogger{}, nil, nil)
+	// Test with nil store (should return error)
+	server, err = newGCSServer(context.Background(), "test-bucket", &mockLogger{}, nil, nil, headers)
 	assert.Error(t, err)
 	assert.Nil(t, server)
+	assert.Contains(t, err.Error(), "store cannot be nil")
+
+	// Test with redirects
+	redirects := map[string]string{
+		"/old": "/new",
+	}
+	server, err = newGCSServer(context.Background(), "test-bucket", &mockLogger{}, store, redirects, headers)
+	assert.NoError(t, err)
+	assert.NotNil(t, server)
+	assert.Equal(t, redirects, server.redirects)
 }
 
 func TestHealthCheckHandlers(t *testing.T) {
@@ -353,8 +373,11 @@ func TestHealthCheckHandlers(t *testing.T) {
 }
 
 func TestNewGCSServer_ErrorPath(t *testing.T) {
-	// Test with nil store
-	server, err := newGCSServer(context.Background(), "test-bucket", &mockLogger{}, nil, nil)
+	headers := &HeaderConfig{
+		PoweredBy: PoweredByConfig{Enabled: true},
+	}
+
+	server, err := newGCSServer(context.Background(), "test-bucket", &mockLogger{}, nil, nil, headers)
 	assert.Error(t, err)
 	assert.Nil(t, server)
 }

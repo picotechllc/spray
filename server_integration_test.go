@@ -53,8 +53,10 @@ func TestGCSIntegration(t *testing.T) {
 		bucket: bucket,
 	}
 
-	// Create the server with updated signature
-	server, err := newGCSServer(ctx, bucketName, &gcpLoggerAdapter{logger: logger}, store, make(map[string]string))
+	// Create a GCS server for testing
+	server, err := newGCSServer(ctx, bucketName, &gcpLoggerAdapter{logger: logger}, store, make(map[string]string), &HeaderConfig{
+		PoweredBy: PoweredByConfig{Enabled: true},
+	})
 	require.NoError(t, err, "Failed to create GCS server")
 
 	// Test object retrieval using pre-existing test object
