@@ -46,10 +46,11 @@ type gcsServer struct {
 	bucketName string
 	logger     Logger
 	redirects  map[string]string
+	headers    *HeaderConfig
 }
 
 // newGCSServer creates a new GCS server
-func newGCSServer(ctx context.Context, bucketName string, logger Logger, store ObjectStore, redirects map[string]string) (*gcsServer, error) {
+func newGCSServer(ctx context.Context, bucketName string, logger Logger, store ObjectStore, redirects map[string]string, headers *HeaderConfig) (*gcsServer, error) {
 	if store == nil {
 		return nil, fmt.Errorf("store cannot be nil")
 	}
@@ -59,6 +60,7 @@ func newGCSServer(ctx context.Context, bucketName string, logger Logger, store O
 		bucketName: bucketName,
 		logger:     logger,
 		redirects:  redirects,
+		headers:    headers,
 	}, nil
 }
 
@@ -368,6 +370,11 @@ func (s *gcsServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Wrap ResponseWriter to capture status code
 	wrapped := &responseWriter{ResponseWriter: w, statusCode: 200}
 
+	// Set X-Powered-By header if enabled
+	if poweredByValue := resolveXPoweredByHeader(s.headers, Version); poweredByValue != "" {
+		wrapped.Header().Set("X-Powered-By", poweredByValue)
+	}
+
 	// Panic recovery
 	defer func() {
 		if err := recover(); err != nil {
@@ -538,7 +545,7 @@ func configRedirectsHandler(server *gcsServer) http.HandlerFunc {
 func createServer(ctx context.Context, cfg *config, logClient LoggingClient) (*http.Server, error) {
 	logger := logClient.Logger("gcs-server")
 
-	server, err := newGCSServer(ctx, cfg.bucketName, logger, cfg.store, cfg.redirects)
+	server, err := newGCSServer(ctx, cfg.bucketName, logger, cfg.store, cfg.redirects, cfg.headers)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create GCS server: %v", err)
 	}

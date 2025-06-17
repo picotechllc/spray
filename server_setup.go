@@ -16,7 +16,7 @@ var DefaultServerSetup ServerSetup = func(ctx context.Context, cfg *config, logC
 	logger := logClient.Logger("gcs-server")
 
 	// Create a new GCS server
-	server, err := newGCSServer(ctx, cfg.bucketName, logger, cfg.store, cfg.redirects)
+	server, err := newGCSServer(ctx, cfg.bucketName, logger, cfg.store, cfg.redirects, cfg.headers)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create GCS server: %v", err)
 	}

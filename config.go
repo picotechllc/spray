@@ -18,6 +18,7 @@ import (
 const (
 	configDir     = ".spray"
 	redirectsFile = "redirects.toml"
+	headersFile   = "headers.toml"
 )
 
 type config struct {
@@ -26,11 +27,22 @@ type config struct {
 	projectID  string
 	store      ObjectStore
 	redirects  map[string]string // path -> destination URL
+	headers    *HeaderConfig     // header configuration
 }
 
 // RedirectConfig represents the structure of the redirects.toml file
 type RedirectConfig struct {
 	Redirects map[string]string `toml:"redirects"`
+}
+
+// HeaderConfig represents the structure of the headers.toml file
+type HeaderConfig struct {
+	PoweredBy PoweredByConfig `toml:"powered_by"`
+}
+
+// PoweredByConfig controls the X-Powered-By header behavior
+type PoweredByConfig struct {
+	Enabled bool `toml:"enabled"`
 }
 
 // isPermissionError checks if the error is related to permissions/access denied
@@ -145,6 +157,40 @@ func loadRedirects(ctx context.Context, store ObjectStore) (map[string]string, e
 	return cleanedRedirects, nil
 }
 
+// loadHeaders loads header configuration from a headers.toml file in the .spray directory
+func loadHeaders(ctx context.Context, store ObjectStore) (*HeaderConfig, error) {
+	configPath := filepath.Join(configDir, headersFile)
+	reader, _, err := store.GetObject(ctx, configPath)
+	if err != nil {
+		if err == storage.ErrObjectNotExist {
+			// No headers file is fine, return default config (enabled)
+			return &HeaderConfig{
+				PoweredBy: PoweredByConfig{Enabled: true},
+			}, nil
+		}
+		// Handle permission errors gracefully - headers are optional
+		if isPermissionError(err) {
+			// Use a generic bucket name for metrics when we don't have access to store the config
+			redirectConfigErrors.WithLabelValues("", "permission_denied").Inc()
+			logStructuredWarning("load_headers", configPath, err)
+			return &HeaderConfig{
+				PoweredBy: PoweredByConfig{Enabled: true},
+			}, nil
+		}
+		redirectConfigErrors.WithLabelValues("", "read_error").Inc()
+		return nil, fmt.Errorf("error reading headers file at %s: %v", configPath, err)
+	}
+	defer reader.Close()
+
+	var headerConfig HeaderConfig
+	if _, err := toml.NewDecoder(reader).Decode(&headerConfig); err != nil {
+		redirectConfigErrors.WithLabelValues("", "parse_error").Inc()
+		return nil, fmt.Errorf("error parsing headers file at %s: %v", configPath, err)
+	}
+
+	return &headerConfig, nil
+}
+
 // loadConfig loads configuration from environment variables and the provided base config.
 func loadConfig(ctx context.Context, base *config, store ObjectStore) (*config, error) {
 	cfg := &config{
@@ -162,16 +208,53 @@ func loadConfig(ctx context.Context, base *config, store ObjectStore) (*config, 
 		return nil, err
 	}
 
-	// Load redirects if store is provided
+	// Load redirects and headers if store is provided
 	if store != nil {
 		redirects, err := loadRedirects(ctx, store)
 		if err != nil {
 			return nil, fmt.Errorf("error loading redirects: %v", err)
 		}
 		cfg.redirects = redirects
+
+		headers, err := loadHeaders(ctx, store)
+		if err != nil {
+			return nil, fmt.Errorf("error loading headers: %v", err)
+		}
+		cfg.headers = headers
 	} else {
 		cfg.redirects = make(map[string]string)
+		cfg.headers = &HeaderConfig{
+			PoweredBy: PoweredByConfig{Enabled: true},
+		}
 	}
 
 	return cfg, nil
+}
+
+// resolveXPoweredByHeader determines the final X-Powered-By header value
+// based on environment variable and site configuration following the hybrid approach:
+// 1. If env var is empty → No header (site owners can't override)
+// 2. If env var has value AND headers.toml doesn't exist → Use env var value
+// 3. If env var has value AND headers.toml disables it → No header
+// 4. If env var has value AND headers.toml enables it → Use env var value
+func resolveXPoweredByHeader(headerConfig *HeaderConfig, version string) string {
+	// Get the environment variable value
+	envValue, envExists := os.LookupEnv("SPRAY_POWERED_BY_HEADER")
+
+	// If explicitly set to empty string, disable entirely (site owners can't override)
+	if envExists && envValue == "" {
+		return ""
+	}
+
+	// If not set, use default format
+	if !envExists {
+		envValue = fmt.Sprintf("spray/%s", version)
+	}
+
+	// Check if site owner has disabled it
+	if headerConfig != nil && !headerConfig.PoweredBy.Enabled {
+		return ""
+	}
+
+	return envValue
 }

@@ -76,6 +76,57 @@ This endpoint is useful for:
 - Monitoring redirect rules in production
 - Integration with configuration management tools
 
+## X-Powered-By Header Configuration
+
+Spray automatically adds an `X-Powered-By` header to all responses, which can be customized using a hybrid approach that gives both server administrators and site owners control.
+
+### Server Administrator Control (Environment Variables)
+
+Server administrators can control the X-Powered-By header using the `SPRAY_POWERED_BY_HEADER` environment variable:
+
+```bash
+# Default behavior (if not set) - shows version
+# Results in: X-Powered-By: spray/v1.0.0
+# (no environment variable needed)
+
+# Custom branding
+export SPRAY_POWERED_BY_HEADER="MyCompany-CDN/spray"
+# Results in: X-Powered-By: MyCompany-CDN/spray
+
+# Disable entirely (site owners cannot override this)
+export SPRAY_POWERED_BY_HEADER=""
+# Results in: No X-Powered-By header
+```
+
+### Site Owner Control (.spray/headers.toml)
+
+Site owners can opt out of the X-Powered-By header by creating a `.spray/headers.toml` file in their bucket:
+
+```toml
+[powered_by]
+enabled = false
+```
+
+**Important Notes:**
+- Site owners can only **disable** the header, not change its value
+- If the server administrator disables the header via environment variable, site owners cannot re-enable it
+- If no `headers.toml` file exists, the header is enabled by default
+- This configuration file supports future extensibility for other header controls
+
+### Precedence Rules
+
+The header behavior follows this precedence:
+
+1. **Environment variable empty** → No header (site owners cannot override)
+2. **Environment variable has value** AND **no headers.toml** → Use environment variable value  
+3. **Environment variable has value** AND **headers.toml disables it** → No header
+4. **Environment variable has value** AND **headers.toml enables it** → Use environment variable value
+
+This hybrid approach ensures:
+- **Security**: Server admins control what version information is exposed
+- **Flexibility**: Site owners can opt out without requiring server changes  
+- **Performance**: Minimal overhead with sensible defaults
+
 ## Endpoints
 
 - `/`: Serves static files from the GCS bucket
