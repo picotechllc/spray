@@ -45,7 +45,7 @@ type PoweredByConfig struct {
 	Enabled bool `toml:"enabled"`
 }
 
-// isPermissionError checks if the error is related to permissions/access denied
+// isPermissionError checks if the error is related to permissions/access denied/authentication
 func isPermissionError(err error) bool {
 	if err == nil {
 		return false
@@ -54,7 +54,15 @@ func isPermissionError(err error) bool {
 	return strings.Contains(errStr, "AccessDenied") ||
 		strings.Contains(errStr, "Access denied") ||
 		strings.Contains(errStr, "permission denied") ||
-		strings.Contains(errStr, "403")
+		strings.Contains(errStr, "403") ||
+		strings.Contains(errStr, "401") ||
+		strings.Contains(errStr, "Unauthorized") ||
+		strings.Contains(errStr, "unauthorized") ||
+		strings.Contains(errStr, "metadata:") ||
+		strings.Contains(errStr, "GCE metadata") ||
+		strings.Contains(errStr, "authentication") ||
+		strings.Contains(errStr, "credentials") ||
+		strings.Contains(errStr, "token")
 }
 
 // validateConfig checks if the config is valid and returns an error if not.
@@ -75,19 +83,19 @@ func logStructuredWarning(operation, path string, err error) {
 		"severity":  "WARNING",
 		"operation": operation,
 		"path":      path,
-		"message":   fmt.Sprintf("Cannot access %s due to permission error", path),
+		"message":   fmt.Sprintf("Cannot access %s due to access/authentication error", path),
 	}
 
 	if err != nil {
 		warning["error"] = err.Error()
-		warning["error_type"] = "permission_denied"
+		warning["error_type"] = "access_denied"
 	}
 
 	// Log to stderr in JSON format for consistency
 	jsonBytes, jsonErr := json.Marshal(warning)
 	if jsonErr != nil {
 		// Fallback to simple log if JSON marshaling fails
-		log.Printf("Warning: Cannot access %s due to permission error: %v", path, err)
+		log.Printf("Warning: Cannot access %s due to access/authentication error: %v", path, err)
 	} else {
 		fmt.Fprintf(os.Stderr, "%s\n", string(jsonBytes))
 	}
