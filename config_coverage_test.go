@@ -52,11 +52,11 @@ func TestLogStructuredWarning(t *testing.T) {
 		t.Errorf("Expected error 'access denied', got %v", logEntry["error"])
 	}
 
-	if logEntry["error_type"] != "permission_denied" {
-		t.Errorf("Expected error_type 'permission_denied', got %v", logEntry["error_type"])
+	if logEntry["error_type"] != "access_denied" {
+		t.Errorf("Expected error_type 'access_denied', got %v", logEntry["error_type"])
 	}
 
-	expectedMessage := "Cannot access /test/path due to permission error"
+	expectedMessage := "Cannot access /test/path due to access/authentication error"
 	if logEntry["message"] != expectedMessage {
 		t.Errorf("Expected message '%s', got %v", expectedMessage, logEntry["message"])
 	}
@@ -121,6 +121,26 @@ func TestIsPermissionError_VariousCases(t *testing.T) {
 		{
 			name:     "403 error",
 			err:      errors.New("HTTP 403 forbidden"),
+			expected: true,
+		},
+		{
+			name:     "401 error",
+			err:      errors.New("HTTP 401 unauthorized"),
+			expected: true,
+		},
+		{
+			name:     "GCE metadata error",
+			err:      errors.New("metadata: GCE metadata not defined"),
+			expected: true,
+		},
+		{
+			name:     "Credentials error",
+			err:      errors.New("invalid credentials provided"),
+			expected: true,
+		},
+		{
+			name:     "Token error",
+			err:      errors.New("token expired"),
 			expected: true,
 		},
 		{
