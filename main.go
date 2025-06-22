@@ -10,6 +10,7 @@ import (
 
 	"cloud.google.com/go/storage"
 	"github.com/spf13/cobra"
+	"google.golang.org/api/option"
 )
 
 // Version can be set at build time using -ldflags "-X main.Version=x.y.z"
@@ -58,7 +59,36 @@ var storageClientFactory = func(ctx context.Context) (StorageClient, error) {
 			objects: make(map[string]debugMockObject),
 		}, nil
 	}
-	return storage.NewClient(ctx)
+
+	// Try to create an authenticated client first
+	client, err := storage.NewClient(ctx)
+	if err != nil {
+		// Preserve the original error for reporting
+		originalErr := err
+
+		// If authentication fails, try creating an unauthenticated client
+		// This is useful for public buckets where authentication isn't required
+		log.Printf("Failed to create authenticated storage client: %v", originalErr)
+
+		// Check if this looks like a credential issue that might work with unauthenticated access
+		errStr := originalErr.Error()
+		if strings.Contains(errStr, "metadata") ||
+			strings.Contains(errStr, "credential") ||
+			strings.Contains(errStr, "token") ||
+			strings.Contains(errStr, "authentication") {
+			log.Printf("Attempting unauthenticated client for public bucket access...")
+
+			client, err = storage.NewClient(ctx, option.WithoutAuthentication())
+			if err != nil {
+				return nil, fmt.Errorf("failed to create both authenticated and unauthenticated storage clients. Authenticated error: %v, Unauthenticated error: %v", originalErr, err)
+			}
+			log.Printf("Successfully created unauthenticated storage client for public bucket access")
+		} else {
+			return nil, fmt.Errorf("failed to create authenticated storage client (non-credential error): %v", originalErr)
+		}
+	}
+
+	return client, nil
 }
 
 // loggingClientFactory is a variable that can be replaced in tests
