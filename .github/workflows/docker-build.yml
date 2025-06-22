@@ -92,12 +92,16 @@ jobs:
           tags: ghcr.io/${{ github.repository_owner }}/spray:${{ needs.tag.outputs.new_version }}-amd64
           build-args: |
             VERSION=${{ needs.tag.outputs.new_version }}
-          cache-from: type=gha,scope=amd64
-          cache-to: type=gha,mode=max,scope=amd64
+          cache-from: |
+            type=gha,scope=amd64
+            type=registry,ref=ghcr.io/${{ github.repository_owner }}/spray:cache-amd64
+          cache-to: |
+            type=gha,mode=max,scope=amd64
+            type=registry,ref=ghcr.io/${{ github.repository_owner }}/spray:cache-amd64,mode=max
 
   build-arm64:
     needs: tag
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm64  # Use native ARM64 runner
     # Only build ARM64 if:
     # 1. Manually triggered with build_arm64=true, OR
     # 2. This is a tag push (long-lived version)
@@ -108,11 +112,6 @@ jobs:
 
       - name: Fetch tags
         run: git fetch --tags
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -144,8 +143,12 @@ jobs:
           tags: ghcr.io/${{ github.repository_owner }}/spray:${{ needs.tag.outputs.new_version }}-arm64
           build-args: |
             VERSION=${{ needs.tag.outputs.new_version }}
-          cache-from: type=gha,scope=arm64
-          cache-to: type=gha,mode=max,scope=arm64
+          cache-from: |
+            type=gha,scope=arm64
+            type=registry,ref=ghcr.io/${{ github.repository_owner }}/spray:cache-arm64
+          cache-to: |
+            type=gha,mode=max,scope=arm64
+            type=registry,ref=ghcr.io/${{ github.repository_owner }}/spray:cache-arm64,mode=max
 
   create-manifest:
     needs: [tag, build-amd64, build-arm64]
