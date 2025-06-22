@@ -71,7 +71,7 @@ func (l *zapLogger) Log(entry logging.Entry) {
 	case logging.Error:
 		level = zapcore.ErrorLevel
 	case logging.Critical:
-		level = zapcore.FatalLevel
+		level = zapcore.ErrorLevel // Use ErrorLevel instead of FatalLevel to avoid os.Exit()
 	default:
 		level = zapcore.InfoLevel
 	}

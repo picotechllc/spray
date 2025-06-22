@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"cloud.google.com/go/logging"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestCreateLoggingClient_TestMode(t *testing.T) {
@@ -177,5 +178,175 @@ func TestZapLogClient_Basic(t *testing.T) {
 	err := client.Close()
 	if err != nil {
 		t.Errorf("Expected no error from Close(), got: %v", err)
+	}
+}
+
+func TestZapLogClient_ErrorHandling(t *testing.T) {
+	tests := []struct {
+		name      string
+		projectID string
+		wantError bool
+	}{
+		{
+			name:      "Empty project ID",
+			projectID: "",
+			wantError: false, // Should still create client but may not work properly
+		},
+		{
+			name:      "Valid project ID",
+			projectID: "test-project",
+			wantError: false,
+		},
+		{
+			name:      "Special characters in project ID",
+			projectID: "test-project-123_abc",
+			wantError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Set test mode to avoid actual GCP logging
+			oldTestMode := os.Getenv("TEST_MODE")
+			os.Setenv("TEST_MODE", "true")
+			defer os.Setenv("TEST_MODE", oldTestMode)
+
+			client, err := createLoggingClient(context.Background(), tt.projectID)
+
+			if tt.wantError {
+				assert.Error(t, err)
+				assert.Nil(t, client)
+			} else {
+				assert.NoError(t, err)
+				assert.NotNil(t, client)
+
+				// Test that we can create a logger
+				logger := client.Logger("test-logger")
+				assert.NotNil(t, logger)
+
+				// Test Close
+				err = client.Close()
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestZapLogger_LogLevels(t *testing.T) {
+	// Create a zap logger for testing
+	zapClient := newZapLogClient()
+	defer zapClient.Close()
+
+	logger := zapClient.Logger("test-logger")
+	zapLogger, ok := logger.(*zapLogger)
+	assert.True(t, ok, "Expected zapLogger type")
+
+	// Test different log levels
+	testCases := []struct {
+		name     string
+		severity logging.Severity
+		message  string
+	}{
+		{
+			name:     "Debug level",
+			severity: logging.Debug,
+			message:  "Debug message",
+		},
+		{
+			name:     "Info level",
+			severity: logging.Info,
+			message:  "Info message",
+		},
+		{
+			name:     "Warning level",
+			severity: logging.Warning,
+			message:  "Warning message",
+		},
+		{
+			name:     "Error level",
+			severity: logging.Error,
+			message:  "Error message",
+		},
+		{
+			name:     "Critical level",
+			severity: logging.Critical,
+			message:  "Critical message",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			entry := logging.Entry{
+				Severity: tc.severity,
+				Payload:  tc.message,
+			}
+
+			// This should not panic
+			assert.NotPanics(t, func() {
+				zapLogger.Log(entry)
+			})
+		})
+	}
+}
+
+func TestZapLogger_ComplexPayloads(t *testing.T) {
+	// Create a zap logger for testing
+	zapClient := newZapLogClient()
+	defer zapClient.Close()
+
+	logger := zapClient.Logger("test-logger")
+
+	testCases := []struct {
+		name    string
+		payload interface{}
+	}{
+		{
+			name:    "String payload",
+			payload: "Simple string message",
+		},
+		{
+			name: "Map payload",
+			payload: map[string]interface{}{
+				"key1": "value1",
+				"key2": 42,
+				"key3": true,
+			},
+		},
+		{
+			name: "Nested map payload",
+			payload: map[string]interface{}{
+				"operation": "test",
+				"details": map[string]interface{}{
+					"user":      "test-user",
+					"timestamp": "2023-01-01T00:00:00Z",
+				},
+			},
+		},
+		{
+			name:    "Nil payload",
+			payload: nil,
+		},
+		{
+			name:    "Numeric payload",
+			payload: 12345,
+		},
+		{
+			name:    "Boolean payload",
+			payload: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			entry := logging.Entry{
+				Severity: logging.Info,
+				Payload:  tc.payload,
+			}
+
+			// This should not panic
+			assert.NotPanics(t, func() {
+				logger.Log(entry)
+			})
+		})
 	}
 }

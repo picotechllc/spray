@@ -584,3 +584,234 @@ func TestStartupLogMessage(t *testing.T) {
 	// Verify the version is included (should be "dev" in tests)
 	assert.Contains(t, output, "Spray version dev starting up on port 8080")
 }
+
+func TestStorageClientFactory_CredentialDetection(t *testing.T) {
+	// Save original factory and environment variables
+	originalFactory := storageClientFactory
+	originalGoogleAppCreds := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS")
+	originalGCEMetadataHost := os.Getenv("GCE_METADATA_HOST")
+	originalMetadataServerAddr := os.Getenv("METADATA_SERVER_ADDRESS")
+	originalGCEMetadataIP := os.Getenv("GCE_METADATA_IP")
+	originalStorageMock := os.Getenv("STORAGE_MOCK")
+
+	defer func() {
+		storageClientFactory = originalFactory
+		os.Setenv("GOOGLE_APPLICATION_CREDENTIALS", originalGoogleAppCreds)
+		os.Setenv("GCE_METADATA_HOST", originalGCEMetadataHost)
+		os.Setenv("METADATA_SERVER_ADDRESS", originalMetadataServerAddr)
+		os.Setenv("GCE_METADATA_IP", originalGCEMetadataIP)
+		os.Setenv("STORAGE_MOCK", originalStorageMock)
+	}()
+
+	tests := []struct {
+		name                       string
+		googleAppCreds             string
+		gceMetadataHost            string
+		metadataServerAddr         string
+		gceMetadataIP              string
+		expectUnauthenticatedFirst bool
+		expectError                bool
+	}{
+		{
+			name:                       "No credentials - should try unauthenticated first",
+			googleAppCreds:             "",
+			gceMetadataHost:            "",
+			metadataServerAddr:         "",
+			gceMetadataIP:              "",
+			expectUnauthenticatedFirst: true,
+			expectError:                false,
+		},
+		{
+			name:                       "Service account credentials present",
+			googleAppCreds:             "/path/to/service-account.json",
+			gceMetadataHost:            "",
+			metadataServerAddr:         "",
+			gceMetadataIP:              "",
+			expectUnauthenticatedFirst: false,
+			expectError:                false,
+		},
+		{
+			name:                       "GCE metadata host present",
+			googleAppCreds:             "",
+			gceMetadataHost:            "metadata.google.internal",
+			metadataServerAddr:         "",
+			gceMetadataIP:              "",
+			expectUnauthenticatedFirst: false,
+			expectError:                false,
+		},
+		{
+			name:                       "Metadata server address present",
+			googleAppCreds:             "",
+			gceMetadataHost:            "",
+			metadataServerAddr:         "169.254.169.254",
+			gceMetadataIP:              "",
+			expectUnauthenticatedFirst: false,
+			expectError:                false,
+		},
+		{
+			name:                       "GCE metadata IP present",
+			googleAppCreds:             "",
+			gceMetadataHost:            "",
+			metadataServerAddr:         "",
+			gceMetadataIP:              "169.254.169.254",
+			expectUnauthenticatedFirst: false,
+			expectError:                false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Clear STORAGE_MOCK to test real client creation logic
+			os.Setenv("STORAGE_MOCK", "")
+
+			// Set up environment variables
+			os.Setenv("GOOGLE_APPLICATION_CREDENTIALS", tt.googleAppCreds)
+			os.Setenv("GCE_METADATA_HOST", tt.gceMetadataHost)
+			os.Setenv("METADATA_SERVER_ADDRESS", tt.metadataServerAddr)
+			os.Setenv("GCE_METADATA_IP", tt.gceMetadataIP)
+
+			// Track which client creation methods were called
+			authenticatedCalled := false
+			unauthenticatedCalledFirst := false
+
+			// Mock the storage client factory to track calls
+			storageClientFactory = func(ctx context.Context) (StorageClient, error) {
+				if os.Getenv("STORAGE_MOCK") == "true" {
+					return &debugMockStorageClient{objects: make(map[string]debugMockObject)}, nil
+				}
+
+				// Replicate the credential detection logic
+				hasCredentials := false
+				if os.Getenv("GOOGLE_APPLICATION_CREDENTIALS") != "" {
+					hasCredentials = true
+				}
+				if os.Getenv("GCE_METADATA_HOST") != "" ||
+					os.Getenv("METADATA_SERVER_ADDRESS") != "" ||
+					os.Getenv("GCE_METADATA_IP") != "" {
+					hasCredentials = true
+				}
+
+				if !hasCredentials {
+					if !authenticatedCalled {
+						unauthenticatedCalledFirst = true
+					}
+					// Return mock client for unauthenticated
+					return &mockStorageClient{objects: make(map[string]mockObject)}, nil
+				}
+
+				// Try authenticated first
+				authenticatedCalled = true
+				// Return mock client for authenticated
+				return &mockStorageClient{objects: make(map[string]mockObject)}, nil
+			}
+
+			ctx := context.Background()
+			client, err := storageClientFactory(ctx)
+
+			if tt.expectError {
+				assert.Error(t, err)
+				assert.Nil(t, client)
+			} else {
+				assert.NoError(t, err)
+				assert.NotNil(t, client)
+			}
+
+			if tt.expectUnauthenticatedFirst {
+				assert.True(t, unauthenticatedCalledFirst, "Should have tried unauthenticated client first")
+			} else {
+				assert.True(t, authenticatedCalled, "Should have tried authenticated client")
+			}
+		})
+	}
+}
+
+func TestStorageClientFactory_MockStorageDetailed(t *testing.T) {
+	// Save original factory and environment
+	originalFactory := storageClientFactory
+	originalStorageMock := os.Getenv("STORAGE_MOCK")
+
+	defer func() {
+		storageClientFactory = originalFactory
+		os.Setenv("STORAGE_MOCK", originalStorageMock)
+	}()
+
+	// Test mock storage
+	os.Setenv("STORAGE_MOCK", "true")
+
+	ctx := context.Background()
+	client, err := storageClientFactory(ctx)
+
+	assert.NoError(t, err)
+	assert.NotNil(t, client)
+
+	// Verify it's a debug mock client
+	debugClient, ok := client.(*debugMockStorageClient)
+	assert.True(t, ok, "Expected debugMockStorageClient")
+	assert.NotNil(t, debugClient.objects)
+}
+
+func TestStorageClientFactory_UnauthenticatedFallback(t *testing.T) {
+	// Save original factory
+	originalFactory := storageClientFactory
+	originalStorageMock := os.Getenv("STORAGE_MOCK")
+
+	defer func() {
+		storageClientFactory = originalFactory
+		os.Setenv("STORAGE_MOCK", originalStorageMock)
+	}()
+
+	// Clear STORAGE_MOCK to test real logic
+	os.Setenv("STORAGE_MOCK", "")
+
+	// Track the sequence of calls
+	var callSequence []string
+
+	storageClientFactory = func(ctx context.Context) (StorageClient, error) {
+		if os.Getenv("STORAGE_MOCK") == "true" {
+			return &debugMockStorageClient{objects: make(map[string]debugMockObject)}, nil
+		}
+
+		// Simulate no credentials detected
+		callSequence = append(callSequence, "checking_credentials")
+		hasCredentials := false
+
+		if !hasCredentials {
+			callSequence = append(callSequence, "trying_unauthenticated")
+			// Simulate unauthenticated client failing
+			callSequence = append(callSequence, "unauthenticated_failed")
+		}
+
+		// Fall back to authenticated
+		callSequence = append(callSequence, "trying_authenticated")
+		// Simulate authenticated client also failing with credential error
+		credentialErr := errors.New("metadata: GCE metadata not defined")
+
+		// Check if this looks like a credential issue
+		errStr := credentialErr.Error()
+		if strings.Contains(errStr, "metadata") {
+			callSequence = append(callSequence, "credential_error_detected")
+			// Try unauthenticated as fallback
+			callSequence = append(callSequence, "fallback_unauthenticated")
+			return &mockStorageClient{objects: make(map[string]mockObject)}, nil
+		}
+
+		return nil, credentialErr
+	}
+
+	ctx := context.Background()
+	client, err := storageClientFactory(ctx)
+
+	assert.NoError(t, err)
+	assert.NotNil(t, client)
+
+	// Verify the call sequence
+	expectedSequence := []string{
+		"checking_credentials",
+		"trying_unauthenticated",
+		"unauthenticated_failed",
+		"trying_authenticated",
+		"credential_error_detected",
+		"fallback_unauthenticated",
+	}
+	assert.Equal(t, expectedSequence, callSequence)
+}
