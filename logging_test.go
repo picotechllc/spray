@@ -206,10 +206,16 @@ func TestZapLogClient_ErrorHandling(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Set test mode to avoid actual GCP logging
-			oldTestMode := os.Getenv("TEST_MODE")
-			os.Setenv("TEST_MODE", "true")
-			defer os.Setenv("TEST_MODE", oldTestMode)
+			// Set correct test mode environment variable to avoid actual GCP logging
+			oldTestMode := os.Getenv("LOGGING_TEST_MODE")
+			os.Setenv("LOGGING_TEST_MODE", "true")
+			defer func() {
+				if oldTestMode == "" {
+					os.Unsetenv("LOGGING_TEST_MODE")
+				} else {
+					os.Setenv("LOGGING_TEST_MODE", oldTestMode)
+				}
+			}()
 
 			client, err := createLoggingClient(context.Background(), tt.projectID)
 
