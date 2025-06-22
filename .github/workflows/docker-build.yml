@@ -144,9 +144,6 @@ jobs:
     needs: [tag, build-amd64, build-arm64]
     runs-on: ubuntu-latest
 
-    # Only create multi-platform manifest if ARM64 was built
-    if: always() && needs.build-amd64.result == 'success' && (needs.build-arm64.result == 'success' || needs.build-arm64.result == 'skipped')
-
     steps:
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
@@ -156,36 +153,20 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Create and push multi-platform manifest
-        if: needs.build-arm64.result == 'success'
         run: |
           docker buildx imagetools create -t ghcr.io/${{ github.repository_owner }}/spray:${{ needs.tag.outputs.new_version }} \
             ghcr.io/${{ github.repository_owner }}/spray:${{ needs.tag.outputs.new_version }}-amd64 \
             ghcr.io/${{ github.repository_owner }}/spray:${{ needs.tag.outputs.new_version }}-arm64
 
       - name: Create and push latest manifest
-        if: needs.build-arm64.result == 'success'
         run: |
           docker buildx imagetools create -t ghcr.io/${{ github.repository_owner }}/spray:latest \
             ghcr.io/${{ github.repository_owner }}/spray:${{ needs.tag.outputs.new_version }}-amd64 \
             ghcr.io/${{ github.repository_owner }}/spray:${{ needs.tag.outputs.new_version }}-arm64
 
-      - name: Create AMD64-only manifest (when ARM64 skipped)
-        if: needs.build-arm64.result == 'skipped'
-        run: |
-          docker buildx imagetools create -t ghcr.io/${{ github.repository_owner }}/spray:${{ needs.tag.outputs.new_version }} \
-            ghcr.io/${{ github.repository_owner }}/spray:${{ needs.tag.outputs.new_version }}-amd64
-
-      - name: Create AMD64-only latest manifest (when ARM64 skipped)
-        if: needs.build-arm64.result == 'skipped'
-        run: |
-          docker buildx imagetools create -t ghcr.io/${{ github.repository_owner }}/spray:latest \
-            ghcr.io/${{ github.repository_owner }}/spray:${{ needs.tag.outputs.new_version }}-amd64
-
   create-release:
     needs: [tag, build-amd64, build-arm64, create-manifest]
     runs-on: ubuntu-latest
-    # Only create release for tag pushes
-    if: needs.tag.outputs.is_tag == 'true' && needs.create-manifest.result == 'success'
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -214,24 +195,12 @@ jobs:
           echo "" >> release_notes.md
           echo "## Docker Images" >> release_notes.md
           echo "" >> release_notes.md
-          echo "### AMD64" >> release_notes.md
+          echo "### Multi-Platform (AMD64 + ARM64)" >> release_notes.md
           echo "\`\`\`bash" >> release_notes.md
           echo "docker pull ghcr.io/${{ github.repository_owner }}/spray:$CURRENT_TAG" >> release_notes.md
           echo "\`\`\`" >> release_notes.md
-          
-          # Check if ARM64 was built  
-          if [ "${{ needs.build-arm64.result }}" == "success" ]; then
-            echo "" >> release_notes.md
-            echo "### Multi-Platform (AMD64 + ARM64)" >> release_notes.md
-            echo "\`\`\`bash" >> release_notes.md
-            echo "docker pull ghcr.io/${{ github.repository_owner }}/spray:$CURRENT_TAG" >> release_notes.md
-            echo "\`\`\`" >> release_notes.md
-            echo "" >> release_notes.md
-            echo "This release includes both AMD64 and ARM64 architectures." >> release_notes.md
-          else
-            echo "" >> release_notes.md
-            echo "_This release only includes AMD64 architecture._" >> release_notes.md
-          fi
+          echo "" >> release_notes.md
+          echo "This release includes both AMD64 and ARM64 architectures." >> release_notes.md
 
       - name: Create GitHub Release
         uses: actions/create-release@v1
