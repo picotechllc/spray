@@ -7,12 +7,6 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
-    inputs:
-      build_arm64:
-        description: 'Build ARM64 image'
-        required: false
-        default: false
-        type: boolean
 
 jobs:
   tag:
@@ -101,11 +95,7 @@ jobs:
 
   build-arm64:
     needs: tag
-    runs-on: ubuntu-24.04-arm64  # Use native ARM64 runner
-    # Only build ARM64 if:
-    # 1. Manually triggered with build_arm64=true, OR
-    # 2. This is a tag push (long-lived version)
-    if: github.event.inputs.build_arm64 == 'true' || needs.tag.outputs.is_tag == 'true'
+    runs-on: ubuntu-24.04-arm  # Use native ARM64 runner (correct label)
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
