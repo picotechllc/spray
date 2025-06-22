@@ -32,10 +32,36 @@ func (s *GCSObjectStore) GetObject(ctx context.Context, path string) (io.ReadClo
 		return nil, nil, err
 	}
 
+	// Try to get attributes, but handle authentication errors gracefully
 	attrs, err := obj.Attrs(ctx)
 	if err != nil {
-		reader.Close()
-		return nil, nil, err
+		// If it's a permission/authentication error, create minimal attributes from the reader
+		if isPermissionError(err) {
+			// For unauthenticated access, we can still get some basic info from the reader
+			attrs = &storage.ObjectAttrs{
+				ContentType: "application/octet-stream", // Default content type
+				Size:        0,                          // We don't know the size without auth
+			}
+
+			// Try to detect content type from the path for common file types
+			if strings.HasSuffix(path, ".html") {
+				attrs.ContentType = "text/html"
+			} else if strings.HasSuffix(path, ".css") {
+				attrs.ContentType = "text/css"
+			} else if strings.HasSuffix(path, ".js") {
+				attrs.ContentType = "application/javascript"
+			} else if strings.HasSuffix(path, ".json") {
+				attrs.ContentType = "application/json"
+			} else if strings.HasSuffix(path, ".toml") {
+				attrs.ContentType = "application/toml"
+			} else if strings.HasSuffix(path, ".txt") {
+				attrs.ContentType = "text/plain"
+			}
+		} else {
+			// For non-permission errors, close the reader and return the error
+			reader.Close()
+			return nil, nil, err
+		}
 	}
 
 	return reader, attrs, nil
