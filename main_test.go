@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -531,4 +532,57 @@ func TestGetCredentialContext_MinimalEnvironment(t *testing.T) {
 	assert.NotContains(t, context, "gcp_environment")
 	assert.NotContains(t, context, "project_id")
 	assert.NotContains(t, context, "gcp_project")
+}
+
+func TestStartupLogMessage(t *testing.T) {
+	// Save original factories
+	originalStorageClientFactory := storageClientFactory
+	originalLoggingClientFactory := loggingClientFactory
+	defer func() {
+		storageClientFactory = originalStorageClientFactory
+		loggingClientFactory = originalLoggingClientFactory
+	}()
+
+	// Mock storage client factory
+	storageClientFactory = func(ctx context.Context) (StorageClient, error) {
+		return &mockStorageClient{objects: make(map[string]mockObject)}, nil
+	}
+
+	// Mock logging client factory
+	loggingClientFactory = func(ctx context.Context, projectID string) (LoggingClient, error) {
+		return &mockLogClient{}, nil
+	}
+
+	// Set required environment variables
+	os.Setenv("BUCKET_NAME", "test-bucket")
+	os.Setenv("GOOGLE_PROJECT_ID", "test-project")
+	defer func() {
+		os.Unsetenv("BUCKET_NAME")
+		os.Unsetenv("GOOGLE_PROJECT_ID")
+	}()
+
+	// Capture log output
+	var logOutput strings.Builder
+	originalLogOutput := log.Writer()
+	log.SetOutput(&logOutput)
+	defer log.SetOutput(originalLogOutput)
+
+	// Test startServer function
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Start server in a goroutine and cancel quickly to avoid hanging
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		cancel()
+	}()
+
+	// This should fail due to cancellation, but we should see the startup message
+	err := startServer(ctx, "8080")
+	assert.Error(t, err) // Expected to fail due to context cancellation
+
+	// Check that the startup message was logged
+	output := logOutput.String()
+	assert.Contains(t, output, "Spray version")
+	assert.Contains(t, output, "starting up on port 8080")
 }

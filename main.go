@@ -135,6 +135,9 @@ func startServer(ctx context.Context, port string) error {
 	}
 	defer logClient.Close()
 
+	// Log startup message
+	log.Printf("Spray version %s starting up on port %s", Version, port)
+
 	// Load initial config without store to get bucket name
 	cfg, err := loadConfig(ctx, &config{port: port}, nil)
 	if err != nil {
@@ -200,6 +203,9 @@ func RunApp(ctx context.Context, port string) error {
 		return err
 	}
 	defer logClient.Close()
+
+	// Log startup message
+	log.Printf("Spray version %s starting up on port %s", Version, port)
 
 	// Create storage client
 	storageClient, err := storageClientFactory(ctx)
