@@ -76,6 +76,19 @@ var storageClientFactory = func(ctx context.Context) (StorageClient, error) {
 		hasCredentials = true
 	}
 
+	// Check for Kubernetes service account token (GKE Workload Identity)
+	if _, err := os.Stat("/var/run/secrets/kubernetes.io/serviceaccount/token"); err == nil {
+		hasCredentials = true
+	}
+
+	// Check for common GCP environment indicators
+	if os.Getenv("GOOGLE_PROJECT_ID") != "" ||
+		os.Getenv("GCP_PROJECT") != "" ||
+		os.Getenv("GOOGLE_CLOUD_PROJECT") != "" ||
+		os.Getenv("GCLOUD_PROJECT") != "" {
+		hasCredentials = true
+	}
+
 	// If no clear indicators of credentials, try unauthenticated first for public buckets
 	if !hasCredentials {
 		log.Printf("No clear credential indicators found, attempting unauthenticated client for public bucket access...")

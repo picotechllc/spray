@@ -592,6 +592,10 @@ func TestStorageClientFactory_CredentialDetection(t *testing.T) {
 	originalGCEMetadataHost := os.Getenv("GCE_METADATA_HOST")
 	originalMetadataServerAddr := os.Getenv("METADATA_SERVER_ADDRESS")
 	originalGCEMetadataIP := os.Getenv("GCE_METADATA_IP")
+	originalGoogleProjectID := os.Getenv("GOOGLE_PROJECT_ID")
+	originalGCPProject := os.Getenv("GCP_PROJECT")
+	originalGoogleCloudProject := os.Getenv("GOOGLE_CLOUD_PROJECT")
+	originalGCloudProject := os.Getenv("GCLOUD_PROJECT")
 	originalStorageMock := os.Getenv("STORAGE_MOCK")
 
 	defer func() {
@@ -600,6 +604,10 @@ func TestStorageClientFactory_CredentialDetection(t *testing.T) {
 		os.Setenv("GCE_METADATA_HOST", originalGCEMetadataHost)
 		os.Setenv("METADATA_SERVER_ADDRESS", originalMetadataServerAddr)
 		os.Setenv("GCE_METADATA_IP", originalGCEMetadataIP)
+		os.Setenv("GOOGLE_PROJECT_ID", originalGoogleProjectID)
+		os.Setenv("GCP_PROJECT", originalGCPProject)
+		os.Setenv("GOOGLE_CLOUD_PROJECT", originalGoogleCloudProject)
+		os.Setenv("GCLOUD_PROJECT", originalGCloudProject)
 		os.Setenv("STORAGE_MOCK", originalStorageMock)
 	}()
 
@@ -609,6 +617,10 @@ func TestStorageClientFactory_CredentialDetection(t *testing.T) {
 		gceMetadataHost            string
 		metadataServerAddr         string
 		gceMetadataIP              string
+		googleProjectID            string
+		gcpProject                 string
+		googleCloudProject         string
+		gcloudProject              string
 		expectUnauthenticatedFirst bool
 		expectError                bool
 	}{
@@ -618,6 +630,10 @@ func TestStorageClientFactory_CredentialDetection(t *testing.T) {
 			gceMetadataHost:            "",
 			metadataServerAddr:         "",
 			gceMetadataIP:              "",
+			googleProjectID:            "",
+			gcpProject:                 "",
+			googleCloudProject:         "",
+			gcloudProject:              "",
 			expectUnauthenticatedFirst: true,
 			expectError:                false,
 		},
@@ -627,6 +643,10 @@ func TestStorageClientFactory_CredentialDetection(t *testing.T) {
 			gceMetadataHost:            "",
 			metadataServerAddr:         "",
 			gceMetadataIP:              "",
+			googleProjectID:            "",
+			gcpProject:                 "",
+			googleCloudProject:         "",
+			gcloudProject:              "",
 			expectUnauthenticatedFirst: false,
 			expectError:                false,
 		},
@@ -636,6 +656,10 @@ func TestStorageClientFactory_CredentialDetection(t *testing.T) {
 			gceMetadataHost:            "metadata.google.internal",
 			metadataServerAddr:         "",
 			gceMetadataIP:              "",
+			googleProjectID:            "",
+			gcpProject:                 "",
+			googleCloudProject:         "",
+			gcloudProject:              "",
 			expectUnauthenticatedFirst: false,
 			expectError:                false,
 		},
@@ -645,6 +669,10 @@ func TestStorageClientFactory_CredentialDetection(t *testing.T) {
 			gceMetadataHost:            "",
 			metadataServerAddr:         "169.254.169.254",
 			gceMetadataIP:              "",
+			googleProjectID:            "",
+			gcpProject:                 "",
+			googleCloudProject:         "",
+			gcloudProject:              "",
 			expectUnauthenticatedFirst: false,
 			expectError:                false,
 		},
@@ -654,6 +682,62 @@ func TestStorageClientFactory_CredentialDetection(t *testing.T) {
 			gceMetadataHost:            "",
 			metadataServerAddr:         "",
 			gceMetadataIP:              "169.254.169.254",
+			googleProjectID:            "",
+			gcpProject:                 "",
+			googleCloudProject:         "",
+			gcloudProject:              "",
+			expectUnauthenticatedFirst: false,
+			expectError:                false,
+		},
+		{
+			name:                       "GOOGLE_PROJECT_ID present (GKE context)",
+			googleAppCreds:             "",
+			gceMetadataHost:            "",
+			metadataServerAddr:         "",
+			gceMetadataIP:              "",
+			googleProjectID:            "test-project",
+			gcpProject:                 "",
+			googleCloudProject:         "",
+			gcloudProject:              "",
+			expectUnauthenticatedFirst: false,
+			expectError:                false,
+		},
+		{
+			name:                       "GCP_PROJECT present",
+			googleAppCreds:             "",
+			gceMetadataHost:            "",
+			metadataServerAddr:         "",
+			gceMetadataIP:              "",
+			googleProjectID:            "",
+			gcpProject:                 "test-project",
+			googleCloudProject:         "",
+			gcloudProject:              "",
+			expectUnauthenticatedFirst: false,
+			expectError:                false,
+		},
+		{
+			name:                       "GOOGLE_CLOUD_PROJECT present",
+			googleAppCreds:             "",
+			gceMetadataHost:            "",
+			metadataServerAddr:         "",
+			gceMetadataIP:              "",
+			googleProjectID:            "",
+			gcpProject:                 "",
+			googleCloudProject:         "test-project",
+			gcloudProject:              "",
+			expectUnauthenticatedFirst: false,
+			expectError:                false,
+		},
+		{
+			name:                       "GCLOUD_PROJECT present",
+			googleAppCreds:             "",
+			gceMetadataHost:            "",
+			metadataServerAddr:         "",
+			gceMetadataIP:              "",
+			googleProjectID:            "",
+			gcpProject:                 "",
+			googleCloudProject:         "",
+			gcloudProject:              "test-project",
 			expectUnauthenticatedFirst: false,
 			expectError:                false,
 		},
@@ -669,6 +753,10 @@ func TestStorageClientFactory_CredentialDetection(t *testing.T) {
 			os.Setenv("GCE_METADATA_HOST", tt.gceMetadataHost)
 			os.Setenv("METADATA_SERVER_ADDRESS", tt.metadataServerAddr)
 			os.Setenv("GCE_METADATA_IP", tt.gceMetadataIP)
+			os.Setenv("GOOGLE_PROJECT_ID", tt.googleProjectID)
+			os.Setenv("GCP_PROJECT", tt.gcpProject)
+			os.Setenv("GOOGLE_CLOUD_PROJECT", tt.googleCloudProject)
+			os.Setenv("GCLOUD_PROJECT", tt.gcloudProject)
 
 			// Track which client creation methods were called
 			authenticatedCalled := false
@@ -688,6 +776,15 @@ func TestStorageClientFactory_CredentialDetection(t *testing.T) {
 				if os.Getenv("GCE_METADATA_HOST") != "" ||
 					os.Getenv("METADATA_SERVER_ADDRESS") != "" ||
 					os.Getenv("GCE_METADATA_IP") != "" {
+					hasCredentials = true
+				}
+				// Check for Kubernetes service account token (GKE Workload Identity)
+				// In tests, we don't have the actual file, so we skip this check
+				// Check for common GCP environment indicators
+				if os.Getenv("GOOGLE_PROJECT_ID") != "" ||
+					os.Getenv("GCP_PROJECT") != "" ||
+					os.Getenv("GOOGLE_CLOUD_PROJECT") != "" ||
+					os.Getenv("GCLOUD_PROJECT") != "" {
 					hasCredentials = true
 				}
 
