@@ -60,7 +60,34 @@ var storageClientFactory = func(ctx context.Context) (StorageClient, error) {
 		}, nil
 	}
 
-	// Try to create an authenticated client first
+	// Check for common indicators that we're in an environment without proper credentials
+	// If we detect this upfront, skip the authenticated client attempt entirely
+	hasCredentials := false
+
+	// Check for explicit service account credentials
+	if os.Getenv("GOOGLE_APPLICATION_CREDENTIALS") != "" {
+		hasCredentials = true
+	}
+
+	// Check for GCE metadata server (indicates we're running on GCP with service account)
+	if os.Getenv("GCE_METADATA_HOST") != "" ||
+		os.Getenv("METADATA_SERVER_ADDRESS") != "" ||
+		os.Getenv("GCE_METADATA_IP") != "" {
+		hasCredentials = true
+	}
+
+	// If no clear indicators of credentials, try unauthenticated first for public buckets
+	if !hasCredentials {
+		log.Printf("No clear credential indicators found, attempting unauthenticated client for public bucket access...")
+		client, err := storage.NewClient(ctx, option.WithoutAuthentication())
+		if err == nil {
+			log.Printf("Successfully created unauthenticated storage client")
+			return client, nil
+		}
+		log.Printf("Unauthenticated client failed: %v, falling back to authenticated client", err)
+	}
+
+	// Try to create an authenticated client first (or as fallback)
 	client, err := storage.NewClient(ctx)
 	if err != nil {
 		// Preserve the original error for reporting
