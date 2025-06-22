@@ -48,16 +48,11 @@ jobs:
         run: |
           go test -race -coverprofile=coverage.out -covermode=atomic ./... -tags=!integration
 
-      - name: Convert coverage to lcov
-        uses: jandelgado/gcov2lcov-action@v1
-        with:
-          infile: coverage.out
-          outfile: coverage.lcov
-
       - name: Upload coverage to Coveralls
         uses: coverallsapp/github-action@v2
         with:
-          file: coverage.lcov
+          file: coverage.out
+          format: golang
 
       - name: Check test status
         if: steps.test.outcome == 'failure'
