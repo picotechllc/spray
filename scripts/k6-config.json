@@ -1,0 +1,149 @@
+{
+  "scenarios": {
+    "quick_test": {
+      "description": "Quick cache validation test - 2 minutes",
+      "options": {
+        "scenarios": {
+          "baseline": {
+            "executor": "constant-vus",
+            "vus": 5,
+            "duration": "30s",
+            "tags": { "scenario": "baseline" },
+            "exec": "testFreshRequests"
+          },
+          "cache_test": {
+            "executor": "constant-vus", 
+            "vus": 10,
+            "duration": "1m30s",
+            "startTime": "45s",
+            "tags": { "scenario": "cache" },
+            "exec": "testETagCacheValidation"
+          }
+        },
+        "thresholds": {
+          "http_req_duration": ["p(95)<1000"],
+          "cache_hit_rate": ["rate>0.7"],
+          "http_req_failed": ["rate<0.05"]
+        }
+      }
+    },
+    
+    "comprehensive_test": {
+      "description": "Full cache performance test - 15 minutes",
+      "options": {
+        "scenarios": {
+          "baseline_fresh_requests": {
+            "executor": "constant-vus",
+            "vus": 10,
+            "duration": "2m",
+            "tags": { "scenario": "baseline" },
+            "exec": "testFreshRequests"
+          },
+          "cache_etag_validation": {
+            "executor": "constant-vus",
+            "vus": 15,
+            "duration": "3m",
+            "startTime": "2m30s",
+            "tags": { "scenario": "etag_cache" },
+            "exec": "testETagCacheValidation"
+          },
+          "cache_lastmod_validation": {
+            "executor": "constant-vus",
+            "vus": 15,
+            "duration": "3m",
+            "startTime": "6m",
+            "tags": { "scenario": "lastmod_cache" },
+            "exec": "testLastModifiedCacheValidation"
+          },
+          "mixed_content_types": {
+            "executor": "constant-vus",
+            "vus": 20,
+            "duration": "4m",
+            "startTime": "9m30s",
+            "tags": { "scenario": "mixed_content" },
+            "exec": "testMixedContentTypes"
+          },
+          "cache_stress_test": {
+            "executor": "ramping-vus",
+            "startVUs": 10,
+            "stages": [
+              { "duration": "1m", "target": 50 },
+              { "duration": "2m", "target": 100 },
+              { "duration": "1m", "target": 50 },
+              { "duration": "1m", "target": 10 }
+            ],
+            "startTime": "14m",
+            "tags": { "scenario": "stress_test" },
+            "exec": "testCacheStressTest"
+          }
+        },
+        "thresholds": {
+          "http_req_duration": ["p(95)<500"],
+          "http_req_duration{status:304}": ["p(95)<100"],
+          "cache_hit_rate": ["rate>0.8"],
+          "etag_304_rate": ["rate>0.9"],
+          "http_req_failed": ["rate<0.01"]
+        }
+      }
+    },
+    
+    "load_test": {
+      "description": "High load test for production validation",
+      "options": {
+        "scenarios": {
+          "high_load_cache": {
+            "executor": "ramping-vus",
+            "startVUs": 50,
+            "stages": [
+              { "duration": "2m", "target": 100 },
+              { "duration": "5m", "target": 200 },
+              { "duration": "2m", "target": 300 },
+              { "duration": "5m", "target": 300 },
+              { "duration": "2m", "target": 200 },
+              { "duration": "2m", "target": 100 },
+              { "duration": "2m", "target": 0 }
+            ],
+            "exec": "testCacheStressTest"
+          }
+        },
+        "thresholds": {
+          "http_req_duration": ["p(95)<1000"],
+          "http_req_duration{status:304}": ["p(95)<200"],
+          "cache_hit_rate": ["rate>0.75"],
+          "http_req_failed": ["rate<0.02"]
+        }
+      }
+    }
+  },
+  
+  "environments": {
+    "local": {
+      "SPRAY_URL": "http://localhost:8080"
+    },
+    "staging": {
+      "SPRAY_URL": "https://spray-staging.example.com"
+    },
+    "production": {
+      "SPRAY_URL": "https://spray.example.com"
+    }
+  },
+  
+  "output_formats": {
+    "json": {
+      "description": "JSON output for CI/CD integration",
+      "options": ["--out", "json=results.json"]
+    },
+    "influxdb": {
+      "description": "InfluxDB output for time-series analysis", 
+      "options": ["--out", "influxdb=http://localhost:8086/k6"]
+    },
+    "prometheus": {
+      "description": "Prometheus remote write",
+      "options": ["--out", "experimental-prometheus-rw"]
+    },
+    "cloud": {
+      "description": "Grafana Cloud k6",
+      "options": ["--out", "cloud"]
+    }
+  }
+} 

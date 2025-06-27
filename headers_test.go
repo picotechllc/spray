@@ -99,9 +99,7 @@ func TestLoadHeaders_FileNotExists(t *testing.T) {
 	headers, err := loadHeaders(context.Background(), store)
 
 	assert.NoError(t, err)
-	expected := &HeaderConfig{
-		PoweredBy: PoweredByConfig{Enabled: true},
-	}
+	expected := getDefaultHeaderConfig()
 	assert.Equal(t, expected, headers)
 }
 
@@ -211,9 +209,7 @@ func TestLoadHeaders_PermissionError(t *testing.T) {
 	// Should return default config and no error when permission denied
 	assert.NoError(t, err)
 	assert.NotNil(t, headers)
-	expected := &HeaderConfig{
-		PoweredBy: PoweredByConfig{Enabled: true},
-	}
+	expected := getDefaultHeaderConfig()
 	assert.Equal(t, expected, headers)
 
 	// Verify that logStructuredWarning was called (JSON output should be present)

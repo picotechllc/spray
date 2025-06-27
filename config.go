@@ -38,11 +38,43 @@ type RedirectConfig struct {
 // HeaderConfig represents the structure of the headers.toml file
 type HeaderConfig struct {
 	PoweredBy PoweredByConfig `toml:"powered_by"`
+	Cache     CacheConfig     `toml:"cache"`
 }
 
 // PoweredByConfig controls the X-Powered-By header behavior
 type PoweredByConfig struct {
 	Enabled bool `toml:"enabled"`
+}
+
+// CacheConfig controls HTTP cache behavior
+type CacheConfig struct {
+	Enabled       bool               `toml:"enabled"`
+	ETag          CacheFeatureConfig `toml:"etag"`
+	LastModified  CacheFeatureConfig `toml:"last_modified"`
+	CacheControl  CacheFeatureConfig `toml:"cache_control"`
+	Policies      CachePolicyConfig  `toml:"policies"`
+	RolloutConfig CacheRolloutConfig `toml:"rollout"`
+}
+
+// CacheFeatureConfig controls individual cache features
+type CacheFeatureConfig struct {
+	Enabled bool `toml:"enabled"`
+}
+
+// CachePolicyConfig controls cache policy settings
+type CachePolicyConfig struct {
+	ShortMaxAge  int `toml:"short_max_age"`  // seconds, default: 300 (5 minutes)
+	MediumMaxAge int `toml:"medium_max_age"` // seconds, default: 86400 (1 day)
+	LongMaxAge   int `toml:"long_max_age"`   // seconds, default: 31536000 (1 year)
+}
+
+// CacheRolloutConfig controls gradual rollout of cache features
+type CacheRolloutConfig struct {
+	Enabled         bool     `toml:"enabled"`
+	Percentage      int      `toml:"percentage"`       // 0-100, percentage of requests to apply cache to
+	PathPrefixes    []string `toml:"path_prefixes"`    // only apply cache to these path prefixes
+	ExcludePrefixes []string `toml:"exclude_prefixes"` // exclude these path prefixes from cache
+	UserAgentRules  []string `toml:"user_agent_rules"` // apply cache only to these user agents (regex)
 }
 
 // isPermissionError checks if the error is related to permissions/access denied/authentication
@@ -165,25 +197,54 @@ func loadRedirects(ctx context.Context, store ObjectStore) (map[string]string, e
 	return cleanedRedirects, nil
 }
 
+// getDefaultHeaderConfig returns the default header configuration
+func getDefaultHeaderConfig() *HeaderConfig {
+	return &HeaderConfig{
+		PoweredBy: PoweredByConfig{
+			Enabled: true,
+		},
+		Cache: CacheConfig{
+			Enabled: false, // Start with cache disabled by default for safety
+			ETag: CacheFeatureConfig{
+				Enabled: true,
+			},
+			LastModified: CacheFeatureConfig{
+				Enabled: true,
+			},
+			CacheControl: CacheFeatureConfig{
+				Enabled: true,
+			},
+			Policies: CachePolicyConfig{
+				ShortMaxAge:  300,      // 5 minutes
+				MediumMaxAge: 86400,    // 1 day
+				LongMaxAge:   31536000, // 1 year
+			},
+			RolloutConfig: CacheRolloutConfig{
+				Enabled:         false,
+				Percentage:      0,
+				PathPrefixes:    []string{},
+				ExcludePrefixes: []string{},
+				UserAgentRules:  []string{},
+			},
+		},
+	}
+}
+
 // loadHeaders loads header configuration from a headers.toml file in the .spray directory
 func loadHeaders(ctx context.Context, store ObjectStore) (*HeaderConfig, error) {
 	configPath := filepath.Join(configDir, headersFile)
 	reader, _, err := store.GetObject(ctx, configPath)
 	if err != nil {
 		if err == storage.ErrObjectNotExist {
-			// No headers file is fine, return default config (enabled)
-			return &HeaderConfig{
-				PoweredBy: PoweredByConfig{Enabled: true},
-			}, nil
+			// No headers file is fine, return default config
+			return getDefaultHeaderConfig(), nil
 		}
 		// Handle permission errors gracefully - headers are optional
 		if isPermissionError(err) {
 			// Use a generic bucket name for metrics when we don't have access to store the config
 			redirectConfigErrors.WithLabelValues("", "permission_denied").Inc()
 			logStructuredWarning("load_headers", configPath, err)
-			return &HeaderConfig{
-				PoweredBy: PoweredByConfig{Enabled: true},
-			}, nil
+			return getDefaultHeaderConfig(), nil
 		}
 		redirectConfigErrors.WithLabelValues("", "read_error").Inc()
 		return nil, fmt.Errorf("error reading headers file at %s: %v", configPath, err)

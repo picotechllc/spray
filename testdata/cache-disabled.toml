@@ -1,0 +1,31 @@
+# Sample headers.toml with HTTP cache disabled
+# This is the safe default configuration
+
+[powered_by]
+enabled = true
+
+[cache]
+# Master switch - disables all cache functionality
+enabled = false
+
+# Individual features (ignored when cache.enabled = false)
+[cache.etag]
+enabled = true
+
+[cache.last_modified]
+enabled = true
+
+[cache.cache_control]
+enabled = true
+
+[cache.policies]
+short_max_age = 300
+medium_max_age = 86400
+long_max_age = 31536000
+
+[cache.rollout]
+enabled = false
+percentage = 0
+path_prefixes = []
+exclude_prefixes = []
+user_agent_rules = [] 

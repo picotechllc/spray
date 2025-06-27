@@ -1,0 +1,51 @@
+# Sample headers.toml with gradual HTTP cache rollout
+# This configuration enables cache for only 25% of users and specific paths
+
+[powered_by]
+enabled = true
+
+[cache]
+# Enable cache functionality
+enabled = true
+
+[cache.etag]
+enabled = true
+
+[cache.last_modified]
+enabled = true
+
+[cache.cache_control]
+enabled = true
+
+[cache.policies]
+short_max_age = 300      # 5 minutes
+medium_max_age = 86400   # 1 day  
+long_max_age = 31536000  # 1 year
+
+# Gradual rollout configuration
+[cache.rollout]
+enabled = true
+
+# Only apply cache to 25% of users (based on IP + User-Agent hash)
+percentage = 25
+
+# Only apply cache to specific path prefixes
+path_prefixes = [
+    "assets/",
+    "static/",
+    "css/",
+    "js/"
+]
+
+# Exclude certain paths from cache (even if they match path_prefixes)
+exclude_prefixes = [
+    "assets/dynamic/",
+    "api/"
+]
+
+# Only apply cache to specific user agents (regex patterns)
+user_agent_rules = [
+    ".*Chrome.*",
+    ".*Firefox.*",
+    ".*Safari.*"
+] 
