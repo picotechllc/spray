@@ -1,0 +1,33 @@
+# Sample headers.toml with HTTP cache enabled
+# Place this file in your GCS bucket at .spray/headers.toml
+
+[powered_by]
+enabled = true
+
+[cache]
+# Master switch for HTTP cache functionality
+enabled = true
+
+# Individual cache features (can be toggled independently)
+[cache.etag]
+enabled = true
+
+[cache.last_modified]
+enabled = true
+
+[cache.cache_control]
+enabled = true
+
+# Cache policy configuration (max-age in seconds)
+[cache.policies]
+short_max_age = 300      # 5 minutes - for HTML files
+medium_max_age = 86400   # 1 day - for CSS, JS, images
+long_max_age = 31536000  # 1 year - for versioned assets
+
+# Rollout configuration (optional - for gradual deployment)
+[cache.rollout]
+enabled = false
+percentage = 100
+path_prefixes = []
+exclude_prefixes = []
+user_agent_rules = [] 

@@ -2,14 +2,18 @@ package main
 
 import (
 	"context"
+	"crypto/md5"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"log"
 	"net/http"
 	"net/url"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"syscall"
 	"time"
@@ -495,6 +499,57 @@ func (s *gcsServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Track object size
 	objectSize.WithLabelValues(s.bucketName, cleanPath).Observe(float64(attrs.Size))
 
+	// Check if cache should be applied to this request
+	applyCaching := s.shouldApplyCache(r, cleanPath)
+
+	var cachePolicy string
+	var isNotModified bool
+	var conditionType string
+
+	if applyCaching {
+		// Set cache headers
+		cachePolicy = s.setCacheHeadersWithConfig(wrapped, attrs, cleanPath)
+		cacheHeadersSet.WithLabelValues(s.bucketName, attrs.ContentType, cachePolicy).Inc()
+
+		// Check conditional requests (cache validation)
+		isNotModified, conditionType = s.checkConditionalRequestWithConfig(r, attrs)
+	} else {
+		// Cache is disabled - track as bypass
+		cachePolicy = "disabled"
+		cacheStatus.WithLabelValues(s.bucketName, cleanPath, "bypass").Inc()
+	}
+
+	// Handle cache hit
+	if applyCaching && isNotModified {
+		// Cache hit - return 304 Not Modified
+		wrapped.statusCode = 304
+		wrapped.WriteHeader(http.StatusNotModified)
+
+		// Track cache hit metrics
+		cacheStatus.WithLabelValues(s.bucketName, cleanPath, "hit").Inc()
+		conditionalRequests.WithLabelValues(s.bucketName, conditionType, "hit").Inc()
+		requestsTotal.WithLabelValues(s.bucketName, cleanPath, r.Method, "304").Inc()
+		gcsOperationsSkipped.WithLabelValues(s.bucketName, "content_download").Inc()
+
+		// Log cache hit
+		s.logInfo("cache_hit", cleanPath, map[string]any{
+			"status":       304,
+			"condition":    conditionType,
+			"content_type": attrs.ContentType,
+			"cache_policy": cachePolicy,
+			"duration_ms":  time.Since(start).Milliseconds(),
+		})
+		return
+	}
+
+	// Cache miss - serve full content (only track if caching is enabled)
+	if applyCaching {
+		cacheStatus.WithLabelValues(s.bucketName, cleanPath, "miss").Inc()
+		if r.Header.Get("If-None-Match") != "" || r.Header.Get("If-Modified-Since") != "" {
+			conditionalRequests.WithLabelValues(s.bucketName, "etag", "miss").Inc()
+		}
+	}
+
 	wrapped.Header().Set("Content-Type", attrs.ContentType)
 
 	// Copy the object contents to the response while tracking bytes transferred
@@ -515,6 +570,7 @@ func (s *gcsServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			"status":       200,
 			"bytes_served": written,
 			"content_type": attrs.ContentType,
+			"cache_policy": cachePolicy,
 			"duration_ms":  time.Since(start).Milliseconds(),
 		})
 	}
@@ -661,4 +717,196 @@ func getCredentialContext() map[string]any {
 	}
 
 	return credContext
+}
+
+// generateETag creates an ETag based on object metadata
+func generateETag(attrs *storage.ObjectAttrs) string {
+	// Use object name, size, and updated time for ETag generation
+	// This provides a unique identifier that changes when the object changes
+	data := fmt.Sprintf("%s-%d-%d", attrs.Name, attrs.Size, attrs.Updated.Unix())
+	hash := md5.Sum([]byte(data))
+	return fmt.Sprintf("\"%x\"", hash)
+}
+
+// shouldApplyCache determines if cache should be applied to this request based on feature flags
+func (s *gcsServer) shouldApplyCache(r *http.Request, path string) bool {
+	cacheConfig := &s.headers.Cache
+
+	// Master cache switch
+	if !cacheConfig.Enabled {
+		return false
+	}
+
+	// Check rollout configuration
+	if cacheConfig.RolloutConfig.Enabled {
+		return s.shouldApplyCacheRollout(r, path, &cacheConfig.RolloutConfig)
+	}
+
+	return true
+}
+
+// shouldApplyCacheRollout determines if cache should be applied based on rollout rules
+func (s *gcsServer) shouldApplyCacheRollout(r *http.Request, path string, rollout *CacheRolloutConfig) bool {
+	// Check percentage rollout
+	if rollout.Percentage < 100 {
+		if !s.isInPercentageRollout(r, rollout.Percentage) {
+			return false
+		}
+	}
+
+	// Check path prefix inclusion
+	if len(rollout.PathPrefixes) > 0 {
+		included := false
+		for _, prefix := range rollout.PathPrefixes {
+			if strings.HasPrefix(path, prefix) {
+				included = true
+				break
+			}
+		}
+		if !included {
+			return false
+		}
+	}
+
+	// Check path prefix exclusion
+	for _, prefix := range rollout.ExcludePrefixes {
+		if strings.HasPrefix(path, prefix) {
+			return false
+		}
+	}
+
+	// Check user agent rules
+	if len(rollout.UserAgentRules) > 0 {
+		userAgent := r.Header.Get("User-Agent")
+		matched := false
+		for _, rule := range rollout.UserAgentRules {
+			if matched, _ := regexp.MatchString(rule, userAgent); matched {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return false
+		}
+	}
+
+	return true
+}
+
+// isInPercentageRollout determines if this request should be included in percentage rollout
+func (s *gcsServer) isInPercentageRollout(r *http.Request, percentage int) bool {
+	if percentage >= 100 {
+		return true
+	}
+	if percentage <= 0 {
+		return false
+	}
+
+	// Use a combination of IP and User-Agent to create a consistent hash
+	// This ensures the same user gets consistent behavior
+	hashInput := r.RemoteAddr + r.Header.Get("User-Agent")
+	hash := fnv.New32a()
+	hash.Write([]byte(hashInput))
+	hashValue := hash.Sum32()
+
+	// Convert to percentage (0-99)
+	userPercentile := int(hashValue % 100)
+
+	return userPercentile < percentage
+}
+
+// getCachePolicyWithConfig determines cache policy with configurable max-age values
+func (s *gcsServer) getCachePolicyWithConfig(contentType, path string) (maxAge int, policy string) {
+	policies := &s.headers.Cache.Policies
+	ext := strings.ToLower(filepath.Ext(path))
+
+	// Static assets get long cache times
+	staticAssets := map[string]bool{
+		".css":   true,
+		".js":    true,
+		".png":   true,
+		".jpg":   true,
+		".jpeg":  true,
+		".gif":   true,
+		".webp":  true,
+		".ico":   true,
+		".woff":  true,
+		".woff2": true,
+		".ttf":   true,
+		".eot":   true,
+		".svg":   true,
+	}
+
+	// Versioned files (containing version numbers or hashes) get very long cache
+	isVersioned := strings.Contains(path, ".min.") ||
+		strings.Contains(path, "-v") ||
+		strings.Contains(path, ".hash.")
+
+	if isVersioned {
+		return policies.LongMaxAge, "long"
+	} else if staticAssets[ext] {
+		return policies.MediumMaxAge, "medium"
+	} else if strings.HasPrefix(contentType, "text/html") {
+		return policies.ShortMaxAge, "short"
+	} else {
+		return policies.MediumMaxAge, "medium" // default
+	}
+}
+
+// setCacheHeadersWithConfig sets cache headers based on feature flag configuration
+func (s *gcsServer) setCacheHeadersWithConfig(w http.ResponseWriter, attrs *storage.ObjectAttrs, path string) string {
+	cacheConfig := &s.headers.Cache
+
+	var etag string
+	var policy string
+
+	// Set ETag if enabled
+	if cacheConfig.ETag.Enabled {
+		etag = generateETag(attrs)
+		w.Header().Set("ETag", etag)
+	}
+
+	// Set Last-Modified if enabled
+	if cacheConfig.LastModified.Enabled {
+		w.Header().Set("Last-Modified", attrs.Updated.UTC().Format(http.TimeFormat))
+	}
+
+	// Set Cache-Control if enabled
+	if cacheConfig.CacheControl.Enabled {
+		maxAge, cachePolicy := s.getCachePolicyWithConfig(attrs.ContentType, path)
+		w.Header().Set("Cache-Control", fmt.Sprintf("public, max-age=%d", maxAge))
+		policy = cachePolicy
+	} else {
+		policy = "disabled"
+	}
+
+	return policy
+}
+
+// checkConditionalRequestWithConfig checks conditional requests based on feature flags
+func (s *gcsServer) checkConditionalRequestWithConfig(r *http.Request, attrs *storage.ObjectAttrs) (bool, string) {
+	cacheConfig := &s.headers.Cache
+
+	// Check If-None-Match (ETag) if ETag is enabled
+	if cacheConfig.ETag.Enabled {
+		if inm := r.Header.Get("If-None-Match"); inm != "" {
+			etag := generateETag(attrs)
+			if strings.Contains(inm, etag) || inm == "*" {
+				return true, "etag"
+			}
+		}
+	}
+
+	// Check If-Modified-Since if Last-Modified is enabled
+	if cacheConfig.LastModified.Enabled {
+		if ims := r.Header.Get("If-Modified-Since"); ims != "" {
+			if t, err := http.ParseTime(ims); err == nil {
+				if !attrs.Updated.After(t) {
+					return true, "last_modified"
+				}
+			}
+		}
+	}
+
+	return false, ""
 }

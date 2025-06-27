@@ -43,13 +43,31 @@ var (
 		[]string{"bucket_name"},
 	)
 
-	// cacheStatus tracks cache hits and misses (for future use)
+	// cacheStatus tracks cache hits and misses (browser/CDN cache validation)
 	cacheStatus = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "gcs_server_cache_total",
-			Help: "Total number of cache hits/misses",
+			Help: "Total number of cache hits/misses from conditional requests",
 		},
-		[]string{"bucket_name", "path", "status"}, // status: hit/miss
+		[]string{"bucket_name", "path", "status"}, // status: hit/miss/bypass
+	)
+
+	// cacheHeadersSet tracks when cache headers are successfully set
+	cacheHeadersSet = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "gcs_server_cache_headers_total",
+			Help: "Total number of responses with cache headers set",
+		},
+		[]string{"bucket_name", "content_type", "cache_policy"}, // cache_policy: short/medium/long
+	)
+
+	// conditionalRequests tracks ETag and Last-Modified validations
+	conditionalRequests = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "gcs_server_conditional_requests_total",
+			Help: "Total number of conditional requests (If-None-Match, If-Modified-Since)",
+		},
+		[]string{"bucket_name", "type", "result"}, // type: etag/last_modified, result: hit/miss
 	)
 
 	// errorTotal tracks specific error types
@@ -77,6 +95,15 @@ var (
 			Name:    "gcs_server_storage_operation_duration_seconds",
 			Help:    "Duration of GCS operations in seconds",
 			Buckets: prometheus.DefBuckets,
+		},
+		[]string{"bucket_name", "operation"}, // operation: get_object, get_attrs
+	)
+
+	// gcsOperationsSkipped tracks when GCS operations are avoided due to cache
+	gcsOperationsSkipped = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "gcs_server_storage_operations_skipped_total",
+			Help: "Total number of GCS operations skipped due to cache validation",
 		},
 		[]string{"bucket_name", "operation"}, // operation: get_object, get_attrs
 	)
